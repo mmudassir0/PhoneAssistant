@@ -32,8 +32,10 @@ jobs:
         if: failure()
         run: |
           {
-            grep -E "^e: |error:|Error:|FAILED|What went wrong|Misunderstood|expected" -A4 build.log || true
-          } | grep -v "^--$" | head -80 > errors.txt
+            grep -E "CMake Error|CMake Warning \(dev\)" -A14 build.log || true
+            grep -E "^e: |error:|FAILED|What went wrong|Misunderstood" -A4 build.log | grep -v "Detecting\|compiler identification\|Check for working" || true
+            find app/.cxx -name "CMakeError.log" -o -name "CMakeConfigureLog.yaml" 2>/dev/null | head -1 | xargs -r tail -40
+          } | grep -v "^--$" | head -150 > errors.txt
           msg=$(sed -e 's/%/%25/g' errors.txt | awk '{printf "%s%%0A", $0}')
           echo "::error title=Build failed::${msg}"
 
