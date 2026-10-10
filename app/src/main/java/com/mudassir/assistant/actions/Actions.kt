@@ -372,13 +372,13 @@ object Actions {
         val now = LocalDateTime.now()
         val events = CalendarEvents.events(ctx, from, days).filter { range != "today" || it.allDay || it.start.isAfter(now.minusHours(1)) }
         if (events.isEmpty()) return Result("Nothing on your calendar $label.")
-        val lines = events.take(8).joinToString("\\n") { e ->
+        val lines = events.take(8).joinToString("\n") { e ->
             val time = if (e.allDay) "All day" else e.start.format(TIME)
             val day = if (days > 1) e.start.format(DateTimeFormatter.ofPattern("EEE ", Locale.US)) else ""
             "• $day$time: ${e.title}" + (e.location?.let { " ($it)" } ?: "")
         }
         val count = if (events.size == 1) "1 event" else "${events.size} events"
-        return Result("You have $count $label:\\n$lines")
+        return Result("You have $count $label:\n$lines")
     }
 
     private fun calendarAdd(c: Command): Result {
@@ -400,18 +400,18 @@ object Actions {
     private fun recall(query: String?): Result {
         val name = Notes.name.value
         if (query != null && query.matches(Regex("name"))) {
-            return Result(if (name != null) "Your name is $name." else "You haven't told me your name yet. Say \\"my name is …\\".")
+            return Result(if (name != null) "Your name is $name." else "You haven't told me your name yet. Say \"my name is …\".")
         }
         if (query == null) {
             val all = Notes.memories.value
-            if (all.isEmpty() && name == null) return Result("You haven't asked me to remember anything yet. Try \\"remember I parked on level 2\\".")
+            if (all.isEmpty() && name == null) return Result("You haven't asked me to remember anything yet. Try \"remember I parked on level 2\".")
             val lines = (listOfNotNull(name?.let { "Your name is $it" }) + all.takeLast(10).map { Notes.secondPerson(it.text) })
-                .joinToString("\\n") { "• $it" }
-            return Result("Here's what I remember:\\n$lines")
+                .joinToString("\n") { "• $it" }
+            return Result("Here's what I remember:\n$lines")
         }
         val hits = Notes.recall(query)
         if (hits.isEmpty()) return Result("I don't have anything saved about $query.")
-        return Result(hits.take(3).joinToString("\\n") { Notes.secondPerson(it.text) + "." }.replace("..", "."))
+        return Result(hits.take(3).joinToString("\n") { Notes.secondPerson(it.text) + "." }.replace("..", "."))
     }
 
     // ---- music ----
@@ -487,7 +487,7 @@ object Actions {
         val suffix = note?.let { " ($it)" } ?: ""
         return when (which) {
             "all" -> Result(
-                "Prayer times today$suffix:\\n" + today.filterKeys { it != "Sunrise" }.entries.joinToString("\\n") { (k, v) -> "• $k ${v?.format(TIME) ?: "-"}" }
+                "Prayer times today$suffix:\n" + today.filterKeys { it != "Sunrise" }.entries.joinToString("\n") { (k, v) -> "• $k ${v?.format(TIME) ?: "-"}" }
             )
             "next" -> {
                 val upcoming = today.entries.filter { it.key != "Sunrise" && it.value != null && it.value!!.isAfter(now.toLocalTime()) }.firstOrNull()
@@ -532,7 +532,7 @@ object Actions {
         if (online) runCatching { OnlineInfo.headlines(3) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let {
             parts += "In the news: " + it.joinToString("; ") + "."
         }
-        return Result(parts.joinToString("\\n\\n"))
+        return Result(parts.joinToString("\n\n"))
     }
 
     // ---- messages ----
