@@ -25,11 +25,17 @@
     <!-- Brightness and silent mode (each asked only when you first use it) -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Calendar, "where am I", prayer times for your city (each asked only when first needed) -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- In-app updater -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Calling isn't required: the app still works on phones without telephony. -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <!-- Android 11+ only lets apps see what they declare here. -->
     <queries>
@@ -78,6 +84,11 @@
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:label="Settings" />
+
+        <activity
+            android:name=".ui.NotesActivity"
+            android:exported="false"
+            android:label="Lists and memory" />
 
         <activity
             android:name=".ui.HistoryActivity"

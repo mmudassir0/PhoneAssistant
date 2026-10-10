@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
         b.messages.itemAnimator?.changeDuration = 0 // streamed text updates shouldn't flash
 
         b.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        b.notesButton.setOnClickListener { startActivity(Intent(this, NotesActivity::class.java)) }
         b.historyButton.setOnClickListener { startActivity(Intent(this, HistoryActivity::class.java)) }
         b.newChatButton.setOnClickListener { Assistant.newChat() }
         b.sendButton.setOnClickListener { sendTyped() }
@@ -86,8 +87,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         listOf(
-            "What can you do?", "Set a timer for 5 minutes", "Remind me in an hour to drink water",
-            "Weather today", "Tell me a fun fact", "Turn on the flashlight"
+            "What can you do?", "Good morning", "Next namaz", "Add milk to my shopping list",
+            "15% of 2400", "Weather today", "Tell me a fun fact"
         ).forEach { text ->
             b.suggestions.addView(Chip(this).apply {
                 this.text = text
@@ -260,12 +261,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun greeting(): String {
         val h = LocalTime.now().hour
-        return when (h) {
+        val name = com.mudassir.assistant.actions.Notes.name.value?.split(" ")?.first()
+        val base = when (h) {
             in 5..11 -> "Good morning"
             in 12..16 -> "Good afternoon"
             in 17..21 -> "Good evening"
-            else -> "Still up?"
+            else -> "Still up"
         }
+        return base + (name?.let { ", $it" } ?: "") + if (base == "Still up") "?" else ""
     }
 
     private fun handle(e: UiEvent) {

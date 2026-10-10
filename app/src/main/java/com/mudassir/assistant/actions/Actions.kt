@@ -12,6 +12,14 @@ import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.MediaStore
+import android.view.KeyEvent
+import com.mudassir.assistant.commands.Calculator
+import com.mudassir.assistant.commands.PrayerTimes
+import com.mudassir.assistant.commands.UnitConverter
+import java.time.LocalDate
+import java.time.LocalTime
 import android.provider.ContactsContract
 import android.provider.Settings as AndroidSettings
 import androidx.core.content.ContextCompat
@@ -40,12 +48,14 @@ object Actions {
         val intent: Intent? = null,
         /** Ask for these first, then run the same command again. If refused, [intent] (if any) opens instead. */
         val permissions: List<String> = emptyList(),
-        /** Text the AI should summarise (notifications), with this instruction. */
-        val summarize: String? = null,
+        /** A prompt for the AI to answer (summaries, translations); its answer is shown after [reply]. */
+        val aiPrompt: String? = null,
         /** A question was asked ("what time?"): the next answer is read as this prefix + answer. */
         val answerPrefix: String? = null,
         /** Clear the conversation. */
-        val newChat: Boolean = false
+        val newChat: Boolean = false,
+        /** Don't read the reply aloud (e.g. "play music": speaking would talk over it). */
+        val quiet: Boolean = false
     )
 
     private val TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
@@ -147,10 +157,86 @@ object Actions {
         Type.RINGER -> ringer(ctx, c.text ?: "silent")
         Type.SETTING -> setting(c.text ?: "wifi")
 
+        Type.CALC -> try {
+            Result("${Calculator.format(Calculator.eval(c.text!!))}")
+        } catch (e: IllegalArgumentException) {
+            Result(e.message ?: "I couldn't work that out.")
+        }
+
+        Type.CONVERT -> convert(c, online)
+        Type.CALENDAR -> calendar(ctx, c.text ?: "today")
+        Type.CALENDAR_ADD -> calendarAdd(c)
+        Type.NOTE_ADD -> {
+            val added = Notes.add(c.text!!, c.message!!)
+            val list = Notes.key(c.text!!)
+            Result(if (list == "notes") "Noted." else "Added ${added.joinToString(" and ")} to your $list list.")
+        }
+        Type.NOTE_READ -> {
+            val list = Notes.key(c.text!!)
+            val items = Notes.items(list)
+            Result(
+                when {
+                    items.isEmpty() -> "Your $list list is empty."
+                    list == "notes" -> "Your notes:\n" + items.joinToString("\n") { "• $it" }
+                    else -> "Your $list list has ${items.size} item${if (items.size == 1) "" else "s"}:\n" + items.joinToString("\n") { "• $it" }
+                }
+            )
+        }
+        Type.NOTE_REMOVE -> {
+            val gone = Notes.remove(c.text!!, c.message!!)
+            Result(if (gone != null) "Removed $gone." else "I couldn't find \"${c.message}\" on your ${Notes.key(c.text!!)} list.")
+        }
+        Type.NOTE_CLEAR -> {
+            Notes.clear(c.text!!)
+            Result("Cleared your ${Notes.key(c.text!!)} list.")
+        }
+        Type.REMEMBER -> {
+            Notes.remember(c.message!!)
+            Result("Got it, I'll remember that.")
+        }
+        Type.RECALL -> recall(c.text)
+        Type.FORGET -> {
+            val n = Notes.forget(c.text!!)
+            Result(if (n == 0) "I don't have anything saved about that." else "Forgotten.")
+        }
+        Type.SET_NAME -> {
+            Notes.setName(c.text!!)
+            Result("Nice to meet you, ${Notes.name.value}.")
+        }
+        Type.MEDIA -> media(ctx, c.text ?: "play")
+        Type.NAVIGATE -> {
+            val dest = c.text.orEmpty()
+            Result(
+                "Starting directions to $dest.",
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=" + Uri.encode(dest)))
+            )
+        }
+        Type.WHERE_AM_I -> whereAmI(ctx)
+        Type.SHARE_LOCATION -> shareLocation(ctx, c.text.orEmpty())
+        Type.CAMERA -> camera(c.text ?: "photo")
+        Type.TRANSLATE -> Result(
+            "",
+            aiPrompt = "Translate into ${c.text!!.replaceFirstChar { it.uppercase() }}: \"${c.message}\". Reply with only the translation. " +
+                "If it isn't written in Latin letters, add the pronunciation in Latin letters in brackets."
+        )
+        Type.PRAYER -> prayer(ctx, c.text ?: "all")
+        Type.BRIEFING -> briefing(ctx, online)
+        Type.CONTACT_INFO -> {
+            val who = c.text.orEmpty()
+            if (!granted(ctx, Manifest.permission.READ_CONTACTS)) {
+                Result("I need access to your contacts to look up $who.", permissions = listOf(Manifest.permission.READ_CONTACTS))
+            } else {
+                val match = findContact(ctx, who)
+                Result(if (match == null) "I couldn't find \"$who\" in your contacts." else "${match.first}'s number is ${match.second}.")
+            }
+        }
+
         Type.HELP -> Result(
-            "Here's what I can do. Phone: alarms, timers, reminders, calls, WhatsApp and SMS messages, opening apps " +
-                "and websites, volume, brightness, silent mode, flashlight, and Wi-Fi or Bluetooth switches. " +
-                "Info: time, date, battery, weather and news. And you can ask me questions or chat, offline."
+            "Here's what I can do.\n" +
+                "• Phone: alarms, timers, reminders, calls, WhatsApp and SMS, apps and websites, camera, music, volume, brightness, silent mode, flashlight.\n" +
+                "• Organize: your calendar, shopping and other lists, notes, and things to remember (\"remember I parked on level 2\").\n" +
+                "• Info: maths and conversions, prayer times, weather, news, directions, where you are, contact numbers, translations.\n" +
+                "• Say \"good morning\" for your daily briefing, or just ask me anything."
         )
 
         Type.UNSUPPORTED -> Result(
@@ -250,9 +336,203 @@ object Actions {
         val text = notes.joinToString("\n") { "[${it.app}] ${it.title}: ${it.text}".take(300) }
         return Result(
             "Here's what you missed:",
-            summarize = "Summarize these phone notifications in a few short sentences. Group by person or app, " +
+            aiPrompt = "Summarize these phone notifications in a few short sentences. Group by person or app, " +
                 "mention anything that needs a reply. Notifications:\n$text"
         )
+    }
+
+    // ---- conversions ----
+
+    private suspend fun convert(c: Command, online: Boolean): Result {
+        val from = c.text!!
+        val to = c.message!!
+        if (UnitConverter.currency(from) != null) {
+            if (!online) return Result("I need an internet connection for exchange rates.")
+            val rate = ExchangeRates.rate(from, to) ?: return Result("I couldn't get the exchange rate right now.")
+            return Result("${Calculator.format(c.value)} $from is about ${Calculator.format(c.value * rate)} $to.")
+        }
+        val r = UnitConverter.convert(c.value, from, to) ?: return Result("I can't convert ${UnitConverter.name(from)} to ${UnitConverter.name(to)}.")
+        val note = if (from.startsWith("marla") || to.startsWith("marla") || from.startsWith("kanal") || to.startsWith("kanal"))
+            " (using 1 marla = 225 sq ft, common in Lahore)" else ""
+        return Result("${Calculator.format(c.value)} ${UnitConverter.name(from)} is ${Calculator.format(r)} ${UnitConverter.name(to)}$note.")
+    }
+
+    // ---- calendar ----
+
+    private fun calendar(ctx: Context, range: String): Result {
+        if (!CalendarEvents.allowed(ctx)) {
+            return Result("I need access to your calendar to check that.", permissions = listOf(Manifest.permission.READ_CALENDAR))
+        }
+        val today = LocalDate.now()
+        val (from, days, label) = when (range) {
+            "tomorrow" -> Triple(today.plusDays(1), 1L, "tomorrow")
+            "week" -> Triple(today, 7L, "this week")
+            else -> Triple(today, 1L, "today")
+        }
+        val now = LocalDateTime.now()
+        val events = CalendarEvents.events(ctx, from, days).filter { range != "today" || it.allDay || it.start.isAfter(now.minusHours(1)) }
+        if (events.isEmpty()) return Result("Nothing on your calendar $label.")
+        val lines = events.take(8).joinToString("\\n") { e ->
+            val time = if (e.allDay) "All day" else e.start.format(TIME)
+            val day = if (days > 1) e.start.format(DateTimeFormatter.ofPattern("EEE ", Locale.US)) else ""
+            "• $day$time: ${e.title}" + (e.location?.let { " ($it)" } ?: "")
+        }
+        val count = if (events.size == 1) "1 event" else "${events.size} events"
+        return Result("You have $count $label:\\n$lines")
+    }
+
+    private fun calendarAdd(c: Command): Result {
+        val title = c.text.orEmpty().replaceFirstChar { it.uppercase() }
+        val at = c.at ?: return Result("When is $title?", answerPrefix = "add $title to my calendar ")
+        val start = at.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        return Result(
+            "Here's $title on ${at.format(DAY)} at ${at.format(TIME)}. Tap Save to add it.",
+            Intent(Intent.ACTION_INSERT)
+                .setData(CalendarContract.Events.CONTENT_URI)
+                .putExtra(CalendarContract.Events.TITLE, title)
+                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, start + 3600_000)
+        )
+    }
+
+    // ---- memory ----
+
+    private fun recall(query: String?): Result {
+        val name = Notes.name.value
+        if (query != null && query.matches(Regex("name"))) {
+            return Result(if (name != null) "Your name is $name." else "You haven't told me your name yet. Say \\"my name is …\\".")
+        }
+        if (query == null) {
+            val all = Notes.memories.value
+            if (all.isEmpty() && name == null) return Result("You haven't asked me to remember anything yet. Try \\"remember I parked on level 2\\".")
+            val lines = (listOfNotNull(name?.let { "Your name is $it" }) + all.takeLast(10).map { Notes.secondPerson(it.text) })
+                .joinToString("\\n") { "• $it" }
+            return Result("Here's what I remember:\\n$lines")
+        }
+        val hits = Notes.recall(query)
+        if (hits.isEmpty()) return Result("I don't have anything saved about $query.")
+        return Result(hits.take(3).joinToString("\\n") { Notes.secondPerson(it.text) + "." }.replace("..", "."))
+    }
+
+    // ---- music ----
+
+    private fun media(ctx: Context, action: String): Result {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        val code = when (action) {
+            "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            else -> KeyEvent.KEYCODE_MEDIA_PLAY
+        }
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        val reply = when (action) { "pause" -> "Paused."; "next" -> "Next."; "previous" -> "Previous."; else -> "Playing." }
+        return Result(reply, quiet = true)
+    }
+
+    // ---- location ----
+
+    private suspend fun whereAmI(ctx: Context): Result {
+        if (!Locator.allowed(ctx)) {
+            return Result("I need location access to tell you where you are.", permissions = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        }
+        val loc = Locator.current(ctx) ?: return Result("I couldn't get your location. Check that location is turned on.")
+        val place = Locator.address(ctx, loc)
+        return Result(
+            if (place != null) "You're near $place." else "You're at %.5f, %.5f.".format(Locale.US, loc.latitude, loc.longitude),
+            Intent(Intent.ACTION_VIEW, Uri.parse("geo:${loc.latitude},${loc.longitude}?q=${loc.latitude},${loc.longitude}"))
+                .takeIf { place == null }
+        )
+    }
+
+    private suspend fun shareLocation(ctx: Context, who: String): Result {
+        if (!Locator.allowed(ctx)) {
+            return Result("I need location access to share where you are.", permissions = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        }
+        val loc = Locator.current(ctx) ?: return Result("I couldn't get your location. Check that location is turned on.")
+        val link = "https://maps.google.com/?q=%.6f,%.6f".format(Locale.US, loc.latitude, loc.longitude)
+        val msg = Command(Type.WHATSAPP).also { it.text = who; it.message = "I'm here: $link" }
+        return message(ctx, msg)
+    }
+
+    // ---- camera ----
+
+    private fun camera(kind: String): Result = when (kind) {
+        "video" -> Result("Opening the video camera.", Intent(MediaStore.INTENT_ACTION_VIDEO_CAMERA))
+        "selfie" -> Result(
+            "Opening the front camera.",
+            Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                .putExtra("android.intent.extras.CAMERA_FACING", 1)
+                .putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+                .putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+        )
+        else -> Result("Opening the camera.", Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
+    }
+
+    // ---- prayer times ----
+
+    /** Prayer times for where you are (or Lahore if location isn't allowed). */
+    suspend fun prayerTimes(ctx: Context, date: LocalDate): Pair<Map<String, LocalTime>, String?> {
+        val loc = if (Locator.allowed(ctx)) Locator.current(ctx) else null
+        val lat = loc?.latitude ?: 31.5204
+        val lng = loc?.longitude ?: 74.3587
+        val offset = ZoneId.systemDefault().rules.getOffset(date.atStartOfDay(ZoneId.systemDefault()).toInstant()).totalSeconds / 3600.0
+        val note = if (loc == null) "for Lahore (allow location for your city)" else null
+        return PrayerTimes.pakistan(lat, lng, offset).on(date) to note
+    }
+
+    private suspend fun prayer(ctx: Context, which: String): Result {
+        val now = LocalDateTime.now()
+        val (today, note) = prayerTimes(ctx, now.toLocalDate())
+        val suffix = note?.let { " ($it)" } ?: ""
+        return when (which) {
+            "all" -> Result(
+                "Prayer times today$suffix:\\n" + today.filterKeys { it != "Sunrise" }.entries.joinToString("\\n") { (k, v) -> "• $k ${v?.format(TIME) ?: "-"}" }
+            )
+            "next" -> {
+                val upcoming = today.entries.filter { it.key != "Sunrise" && it.value != null && it.value!!.isAfter(now.toLocalTime()) }.firstOrNull()
+                if (upcoming != null) {
+                    val mins = Duration.between(now.toLocalTime(), upcoming.value).toMinutes()
+                    Result("Next is ${upcoming.key} at ${upcoming.value!!.format(TIME)}, in ${CommandParser.describe(Duration.ofMinutes(mins))}$suffix.")
+                } else {
+                    val fajr = prayerTimes(ctx, now.toLocalDate().plusDays(1)).first["Fajr"]
+                    Result("Next is Fajr tomorrow at ${fajr?.format(TIME)}$suffix.")
+                }
+            }
+            else -> {
+                val t = today[which]
+                val passed = t != null && t.isBefore(now.toLocalTime())
+                if (passed) {
+                    val tomorrow = prayerTimes(ctx, now.toLocalDate().plusDays(1)).first[which]
+                    Result("$which was at ${t!!.format(TIME)} today. Tomorrow it's at ${tomorrow?.format(TIME)}$suffix.")
+                } else Result("$which is at ${t?.format(TIME) ?: "-"} today$suffix.")
+            }
+        }
+    }
+
+    // ---- briefing ----
+
+    private suspend fun briefing(ctx: Context, online: Boolean): Result {
+        val now = LocalDateTime.now()
+        val name = Notes.name.value?.let { ", $it" } ?: ""
+        val hello = when (now.hour) { in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; in 17..21 -> "Good evening"; else -> "Hello" }
+        val parts = mutableListOf("$hello$name. It's ${now.format(TIME)} on ${now.format(DAY)}.")
+        if (online) runCatching { OnlineInfo.weather(Settings(ctx).weatherCity) }.getOrNull()?.let { parts += it }
+        prayer(ctx, "next").reply.let { parts += it }
+        if (CalendarEvents.allowed(ctx)) {
+            val events = CalendarEvents.events(ctx, now.toLocalDate(), 1).filter { it.allDay || it.start.isAfter(now) }
+            parts += if (events.isEmpty()) "Your calendar is clear today."
+            else "First up: ${events.first().title}" + (if (events.first().allDay) "" else " at ${events.first().start.format(TIME)}") +
+                (if (events.size > 1) ", plus ${events.size - 1} more." else ".")
+        }
+        val reminders = Reminders.upcoming(ctx).filter {
+            java.time.Instant.ofEpochMilli(it.at).atZone(ZoneId.systemDefault()).toLocalDate() == now.toLocalDate()
+        }
+        if (reminders.isNotEmpty()) parts += "Reminders today: " + reminders.joinToString(", ") { it.text } + "."
+        if (online) runCatching { OnlineInfo.headlines(3) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let {
+            parts += "In the news: " + it.joinToString("; ") + "."
+        }
+        return Result(parts.joinToString("\\n\\n"))
     }
 
     // ---- messages ----

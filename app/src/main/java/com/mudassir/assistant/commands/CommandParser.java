@@ -26,6 +26,9 @@ public final class CommandParser {
         NOTIFICATIONS, NEWS, WEATHER, FLASHLIGHT_ON, FLASHLIGHT_OFF, NEW_CHAT,
         OPEN_URL, WEB_SEARCH, YOUTUBE_SEARCH,
         WHATSAPP, SMS, VOLUME, BRIGHTNESS, RINGER, SETTING, HELP,
+        CALC, CONVERT, CALENDAR, CALENDAR_ADD, NOTE_ADD, NOTE_READ, NOTE_REMOVE, NOTE_CLEAR,
+        REMEMBER, RECALL, FORGET, SET_NAME, MEDIA, NAVIGATE, WHERE_AM_I, SHARE_LOCATION,
+        CAMERA, TRANSLATE, PRAYER, BRIEFING, CONTACT_INFO,
         /** Looks like a phone command we can't do: answer honestly instead of letting the AI pretend. */
         UNSUPPORTED
     }
@@ -39,17 +42,20 @@ public final class CommandParser {
         public LocalDateTime at;
         /** TIMER: length in seconds. */
         public long seconds;
-        /** WHATSAPP/SMS: message body (null = ask). */
+        /** WHATSAPP/SMS: message body (null = ask). NOTE_*: the item. REMEMBER: the fact. TRANSLATE: the phrase. CONVERT: target unit. */
         public String message;
+        /** CONVERT: the amount. */
+        public double value;
         /** REMINDER: what. CALL/WHATSAPP/SMS: who. VOLUME/BRIGHTNESS: up|down|max|min|mute|unmute|status or a percent. RINGER: normal|vibrate|silent. SETTING: wifi|bluetooth|data|airplane|hotspot|location. OPEN_APP: app name. OPEN_URL: address. *_SEARCH: query. NOTIFICATIONS: app filter (may be null). */
         public String text;
 
-        Command(Type type) { this.type = type; }
+        public Command(Type type) { this.type = type; }
 
         @Override public String toString() {
             return type + (time != null ? " time=" + time : "") + (at != null ? " at=" + at : "")
                 + (seconds > 0 ? " seconds=" + seconds : "") + (text != null ? " text='" + text + "'" : "")
-                + (message != null ? " message='" + message + "'" : "");
+                + (message != null ? " message='" + message + "'" : "")
+                + (type == Type.CONVERT ? " value=" + Calculator.format(value) : "");
         }
     }
 
@@ -73,6 +79,146 @@ public final class CommandParser {
             if (s.matches(".*\\b(on|open|start|enable|activate|turn|switch|light)\\b.*") || s.matches("(flash ?light|torch)")) return new Command(Type.FLASHLIGHT_ON);
         }
 
+        // ---- maths and conversions (exact, never the AI) ----
+        String expr = Calculator.toExpression(s);
+        if (expr != null) {
+            try {
+                Calculator.eval(expr);
+                Command c = new Command(Type.CALC);
+                c.text = expr;
+                return c;
+            } catch (IllegalArgumentException e) {
+                if (e.getMessage() != null && e.getMessage().contains("divide by zero")) {
+                    Command c = new Command(Type.CALC);
+                    c.text = expr;
+                    return c;
+                }
+            }
+        }
+        Command conversion = parseConversion(s);
+        if (conversion != null) return conversion;
+
+        // ---- calendar ----
+        if (s.matches("(what('s| is) (on )?)?(my )?(calendar|schedule|agenda)( for)?( today| tomorrow| this week)?|what('s| is) on my (calendar|schedule|agenda)( for)?( today| tomorrow| this week)?|do i have (any )?(meetings|events|appointments|plans)( today| tomorrow| this week)?|what (meetings|events|appointments) do i have( today| tomorrow| this week)?|(show|read|check) (me )?my (calendar|schedule|agenda)( for)?( today| tomorrow| this week)?")) {
+            Command c = new Command(Type.CALENDAR);
+            c.text = s.contains("tomorrow") ? "tomorrow" : s.contains("week") ? "week" : "today";
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:add|schedule|create|put|set up|book|make)(?: a| an| the)? (?<title>.+?)(?: (?:to|in|on|into) (?:my |the )?calendar)(?<rest>.*)$|^(?:add|schedule|create|set up|book|make)(?: a| an)? (?<title2>(?:meeting|appointment|event|call|interview|lunch|dinner)(?: with [a-z ]+?)?)(?<rest2> (?:at|on|tomorrow|today|tonight|in|next).*)$").matcher(s)).find()) {
+            String title = firstNonNull(m.group("title"), m.group("title2"));
+            String rest = firstNonNull(m.group("rest"), m.group("rest2"));
+            Command r = parseReminder(title + " " + rest.trim(), now);
+            Command c = new Command(Type.CALENDAR_ADD);
+            c.text = r.text;
+            c.at = r.at;
+            return c;
+        }
+
+        // ---- lists and notes ----
+        if ((m = Pattern.compile("^(?:add|put) (?<item>.+?) (?:to|on|in) (?:my |the )?(?<list>[a-z]+(?: [a-z]+)?) list$").matcher(s)).find()) {
+            Command c = new Command(Type.NOTE_ADD);
+            c.text = m.group("list");
+            c.message = m.group("item");
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:take|make|write|create|add)(?: a| this)? note(?: that| saying| of)?:? (?<item>.+)$|^note(?: that|:)? (?<item2>.+)$|^(?:write|jot) down (?:that )?(?<item3>.+)$").matcher(s)).find()) {
+            Command c = new Command(Type.NOTE_ADD);
+            c.text = "notes";
+            c.message = firstNonNull(m.group("item"), m.group("item2"), m.group("item3"));
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:remove|delete|take|cross off|tick off) (?<item>.+?) (?:from|off) (?:my |the )?(?<list>[a-z]+(?: [a-z]+)?) list$").matcher(s)).find()) {
+            Command c = new Command(Type.NOTE_REMOVE);
+            c.text = m.group("list");
+            c.message = m.group("item");
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:clear|empty|delete|erase)(?: all of| everything (?:on|in|from))? (?:my |the )?(?<list>[a-z]+(?: [a-z]+)?) list$").matcher(s)).find()) {
+            Command c = new Command(Type.NOTE_CLEAR);
+            c.text = m.group("list");
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:what(?:'s| is)(?: on| in)?|read(?: me)?|show(?: me)?|tell me|open|check)(?: out)?(?: what's on)? (?:my |the )?(?<list>[a-z]+(?: [a-z]+)?) list$|^(?:read|show|open|what are)(?: me)? (?:my |the )?(?<notes>notes)$").matcher(s)).find()) {
+            Command c = new Command(Type.NOTE_READ);
+            c.text = m.group("list") != null ? m.group("list") : "notes";
+            return c;
+        }
+
+        // ---- memory ----
+        if ((m = Pattern.compile("^(?:my name is|i am called|call me) (?<n>[a-z]+(?: [a-z]+)?)$").matcher(s)).find()
+                && !m.group("n").matches("(back|later|now|when .*|at .*|tomorrow|tonight|in .*)")) {
+            Command c = new Command(Type.SET_NAME);
+            c.text = m.group("n");
+            return c;
+        }
+        if ((m = Pattern.compile("^remember(?: that)? (?<fact>.+)$").matcher(s)).find() && !s.matches("^remember to .*")) {
+            Command c = new Command(Type.REMEMBER);
+            c.message = m.group("fact");
+            return c;
+        }
+        if ((m = Pattern.compile("^forget (?:that |about |what i said about )?(?<q>.+)$").matcher(s)).find()) {
+            Command c = new Command(Type.FORGET);
+            c.text = m.group("q");
+            return c;
+        }
+
+        // ---- music ----
+        if ((m = Pattern.compile("^(?<a>play|resume|continue|pause|stop|next|skip|previous|go back)(?: to)?(?: the| this| that)?(?: music| song| track| audio| playback| video)?(?: please)?$|^(?<b>next|previous|last) (?:song|track)$|^skip (?:this |the )?(?:song|track)$").matcher(s)).find()) {
+            String a = firstNonNull(m.group("a"), m.group("b"), "next");
+            Command c = new Command(Type.MEDIA);
+            c.text = a.matches("play|resume|continue") ? "play" : a.matches("pause|stop") ? "pause"
+                : a.matches("previous|last|go back") ? "previous" : "next";
+            return c;
+        }
+
+        // ---- location ----
+        if ((m = Pattern.compile("^(?:share|send) (?:my )?(?:current |live )?location (?:to|with) (?<w>.+?)(?: on whatsapp| via whatsapp)?$").matcher(s)).find()) {
+            Command c = new Command(Type.SHARE_LOCATION);
+            c.text = m.group("w");
+            return c;
+        }
+        if (s.matches("where am i( right now| now)?|what('s| is) my (current )?(location|address)|my (current )?location|where are we( now)?")) {
+            return new Command(Type.WHERE_AM_I);
+        }
+        if ((m = Pattern.compile("^(?:navigate|take me|directions|get directions|give me directions|drive|show me the way|how do i get|route me) (?:to |for )?(?<d>.+)$").matcher(s)).find()
+                && !s.matches("^go (back|to sleep|ahead|on)\\b.*")) {
+            Command c = new Command(Type.NAVIGATE);
+            c.text = m.group("d").replaceFirst("^the ", "");
+            return c;
+        }
+
+        // ---- camera ----
+        if ((m = Pattern.compile("^(?:take|click|capture|shoot|snap)(?: a| me a| my)? (?<k>selfie|photo|picture|pic|video)(?: of me)?$|^open (?:the )?(?<f>front |selfie )?camera$|^(?<k2>selfie)$").matcher(s)).find()) {
+            Command c = new Command(Type.CAMERA);
+            String k = firstNonNull(m.group("k"), m.group("k2"), m.group("f") != null ? "selfie" : "photo");
+            c.text = k.equals("video") ? "video" : k.equals("selfie") ? "selfie" : "photo";
+            return c;
+        }
+
+        // ---- translate ----
+        if ((m = Pattern.compile("^translate (?<p>.+?) (?:to|into|in) (?<l>[a-z]+)$|^how (?:do|would) (?:you|i) say (?<p2>.+?) in (?<l2>[a-z]+)$|^what(?:'s| is) (?<p3>.+?) in (?<l3>urdu|english|arabic|punjabi|hindi|french|spanish|german|chinese|turkish|persian|pashto|sindhi)$").matcher(s)).find()) {
+            Command c = new Command(Type.TRANSLATE);
+            c.message = firstNonNull(m.group("p"), m.group("p2"), m.group("p3")).replaceAll("^[\"']|[\"']$", "");
+            c.text = firstNonNull(m.group("l"), m.group("l2"), m.group("l3"));
+            return c;
+        }
+
+        // ---- prayer times ----
+        if ((m = Pattern.compile("\\b(?<p>fajr|fajar|sehri|sahri|suhoor|sunrise|zuhr|zohr|zohar|dhuhr|duhr|asr|maghrib|magrib|iftar|isha|esha|namaz|namaaz|prayer|prayers|salah|salat|azan|azaan|adhan)\\b").matcher(s)).find()
+                && !s.matches("^(how|why) .*") && !s.matches(".*\\b(remind|alarm)\\b.*")) {
+            String p = m.group("p");
+            Command c = new Command(Type.PRAYER);
+            c.text = p.matches("fajr|fajar|sehri|sahri|suhoor") ? "Fajr" : p.equals("sunrise") ? "Sunrise"
+                : p.matches("zuhr|zohr|zohar|dhuhr|duhr") ? "Dhuhr" : p.equals("asr") ? "Asr"
+                : p.matches("maghrib|magrib|iftar") ? "Maghrib" : p.matches("isha|esha") ? "Isha"
+                : s.matches(".*\\b(next|upcoming|coming)\\b.*") ? "next" : "all";
+            return c;
+        }
+
+        // ---- daily briefing ----
+        if (s.matches("good morning|morning|(my |daily |morning )?briefing|brief me|(what's|how does|how is) my day( look| looking)?( like)?( today)?|plan my day|what's up today")) {
+            return new Command(Type.BRIEFING);
+        }
         // ---- timer (before alarm: "set a timer for 10 minutes") ----
         if (s.matches(".*\\b(timer|countdown|count down)\\b.*")) {
             long secs = parseDuration(s);
@@ -160,6 +306,13 @@ public final class CommandParser {
             return c;
         }
 
+        // ---- contact numbers ----
+        if ((m = Pattern.compile("^(?:what(?:'s| is)|give me|tell me|show me|find|get)(?: me)? (?<w>.+?)(?:'s|s') (?:phone |mobile |cell )?number$|^(?:what(?:'s| is)|give me|tell me|find) the (?:phone )?number (?:of|for) (?<w2>.+)$").matcher(s)).find()) {
+            Command c = new Command(Type.CONTACT_INFO);
+            c.text = firstNonNull(m.group("w"), m.group("w2"));
+            return c;
+        }
+
         // ---- call ----
         if ((m = Pattern.compile("^(?:please )?(?:call|phone|dial|ring) (.+?)(?: please| now| for me)?$").matcher(s)).find()) {
             Command c = new Command(Type.CALL);
@@ -194,6 +347,16 @@ public final class CommandParser {
         if (s.matches("(what('s| is) (the )?)?(latest |today's |top )?(news|headlines)( today| now)?|(tell|give|read) me the (latest )?(news|headlines)|what's happening( in the world)?"))
             return new Command(Type.NEWS);
 
+        // ---- things you told me to remember ----
+        if ((m = Pattern.compile("^where (?:did|have) i (?<q1>.+)$|^where (?:is|are) my (?<q2>.+)$|^what(?:'s| is| was| are| were) my (?<q3>.+)$|^when(?:'s| is| was) my (?<q4>.+)$|^do you remember (?<q5>.+)$|^what(?:'s| is) (?<q6>.+?) i (?:told|asked) you to remember$").matcher(s)).find()) {
+            Command c = new Command(Type.RECALL);
+            c.text = firstNonNull(m.group("q1"), m.group("q2"), m.group("q3"), m.group("q4"), m.group("q5"), m.group("q6"));
+            return c;
+        }
+        if (s.matches("what do you (know|remember)( about me)?|what have i told you|(show|list) (my )?memories|what did i ask you to remember")) {
+            return new Command(Type.RECALL);
+        }
+
         // Sounds like an instruction for the phone that we can't do: say so honestly.
         if (s.matches("^(turn|switch|set|send|book|order|pay|delete|install|uninstall|enable|disable|increase|decrease|lower|raise|connect|disconnect|take|record|share|lock|unlock|shut ?down|restart|reboot) .*")
                 || s.matches(".*\\b(screenshot|screen record\\w*)\\b.*")) {
@@ -217,6 +380,33 @@ public final class CommandParser {
             return new Command(Type.FLASHLIGHT_OFF);
         if (flash && s.matches("^(now |ok |okay |and )?(please )?((turn|switch|put) )?(it |that |this )?(on|back on)( it| that| this| now| again| please)*$"))
             return new Command(Type.FLASHLIGHT_ON);
+        return null;
+    }
+
+    private static final Pattern CONVERT_A = Pattern.compile(
+        "^(?:convert |change |what is |what's |how much is |how much are |how many )?(?<v>\\$?\\d+(?:\\.\\d+)?|a|an|one)? ?(?<from>[a-z/°$\" .]+?) (?:to|in|into|in to|as|equals?) (?<to>[a-z/°$ .]+?)$");
+    private static final Pattern CONVERT_B = Pattern.compile(
+        "^how many (?<to>[a-z/° .]+?) (?:are |is )?(?:there )?in (?:a |an |one |(?<v>\\d+(?:\\.\\d+)?) )?(?<from>[a-z/° .]+?)$");
+
+    /** "5 km to miles", "how many grams in a tola", "100 dollars in rupees". */
+    private static Command parseConversion(String s) {
+        for (Pattern p : new Pattern[] {CONVERT_A, CONVERT_B}) {
+            Matcher m = p.matcher(s);
+            if (!m.find()) continue;
+            String from = m.group("from").trim(), to = m.group("to").trim();
+            String v = m.group("v");
+            if (from.startsWith("$")) { from = "usd"; }
+            double value = v == null || v.matches("a|an|one") ? 1 : Double.parseDouble(v.replace("$", ""));
+            if (v != null && v.startsWith("$")) from = from.isEmpty() ? "usd" : from;
+            boolean units = UnitConverter.isUnit(from) && UnitConverter.isUnit(to) && UnitConverter.convert(1, from, to) != null;
+            boolean money = UnitConverter.currency(from) != null && UnitConverter.currency(to) != null;
+            if (!units && !money) continue;
+            Command c = new Command(Type.CONVERT);
+            c.value = value;
+            c.text = money ? UnitConverter.currency(from) : from;
+            c.message = money ? UnitConverter.currency(to) : to;
+            return c;
+        }
         return null;
     }
 
@@ -261,9 +451,20 @@ public final class CommandParser {
                 tonight = m.group(1).equals("tonight");
                 explicitDay = !m.group(1).equals("today");
                 what = cut(what, m);
+            } else if ((m = Pattern.compile("\\b(?:on |this |next |coming )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b").matcher(what)).find()) {
+                java.time.DayOfWeek target = java.time.DayOfWeek.valueOf(m.group(1).toUpperCase(java.util.Locale.US));
+                int ahead = (target.getValue() - day.getDayOfWeek().getValue() + 7) % 7;
+                if (ahead == 0 && m.group(0).startsWith("next")) ahead = 7;
+                day = day.plusDays(ahead);
+                explicitDay = ahead > 0;
+                what = cut(what, m);
             }
             if ((m = CLOCK.matcher(what)).find()) {
                 LocalTime t = clockFrom(m, tonight);
+                // A bare "at 5" on another day means 5 pm: nobody books things at 1-6 am by default.
+                if (t != null && explicitDay && m.group(1) == null && m.group(4) == null && t.getHour() >= 1 && t.getHour() <= 6) {
+                    t = t.plusHours(12);
+                }
                 if (t != null) {
                     at = LocalDateTime.of(day, t);
                     if (!explicitDay && !at.isAfter(now)) {

@@ -176,11 +176,13 @@ object Assistant {
                 newChat()
                 return
             }
-            add(ChatMessage(ids.getAndIncrement(), fromUser = false, text = result.reply, source = "phone"))
-            if (speak) speaker?.say(result.reply)
+            if (result.reply.isNotBlank()) {
+                add(ChatMessage(ids.getAndIncrement(), fromUser = false, text = result.reply, source = "phone"))
+                if (speak && !result.quiet) speaker?.say(result.reply)
+            }
             result.intent?.let { _events.emit(UiEvent.Open(it)) }
             result.answerPrefix?.let { pendingPrefix = it }
-            result.summarize?.let { prompt ->
+            result.aiPrompt?.let { prompt ->
                 chat(ctx, listOf(Turn(Turn.SYSTEM, systemPrompt(online = false)), Turn(Turn.USER, prompt)), speak)
             }
         } catch (e: CancellationException) {
@@ -268,7 +270,18 @@ object Assistant {
             "If you don't know something or it needs live information, say so briefly. " +
             "IMPORTANT: you cannot control the phone or any app. Never claim you did something (turned on or off, " +
             "set, opened, called, sent). If asked to do something on the phone, say you can't, and suggest a clear " +
-            "command like 'turn off the flashlight' or 'set an alarm for 7 am'. It is now $now."
+            "command like 'turn off the flashlight' or 'set an alarm for 7 am'. It is now $now." + personal()
+    }
+
+    /** What the user told us about themselves, so answers can be personal. */
+    private fun personal(): String {
+        val name = com.mudassir.assistant.actions.Notes.name.value
+        val facts = com.mudassir.assistant.actions.Notes.memories.value.takeLast(15).map { it.text }
+        if (name == null && facts.isEmpty()) return ""
+        return buildString {
+            if (name != null) append(" The user's name is $name.")
+            if (facts.isNotEmpty()) append(" Things the user asked you to remember (use them when relevant): " + facts.joinToString("; ") + ".")
+        }
     }
 
     private fun setSource(id: Long, source: String) =

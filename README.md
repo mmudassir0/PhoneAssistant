@@ -15,7 +15,14 @@ llama.cpp) for questions, plus instant phone commands. Optional free online mode
   - Time, date, battery; "What did I miss?" summarizes notifications
 - **Online extras:** weather (Open-Meteo) and news (Google News), both free.
 - **Questions and chat:** offline brain, or Gemini when online mode is on.
-- **Chats are saved**; open old ones from the history button.
+- **Organize:** "What's on my calendar today?", "Schedule a meeting tomorrow at 3", "Add milk to my
+  shopping list", "Take a note…", "Remember I parked on level 2" → "Where did I park?"
+- **Exact answers (offline):** maths ("15% of 2400"), conversions ("10 marla in square feet",
+  "5 km to miles"; currency online), and **prayer times** for your location (Karachi method,
+  Hanafi Asr, checked against the Adhan library to within 1 minute).
+- **More:** music control ("next song"), directions, "where am I", share your location on WhatsApp,
+  camera and selfies, translations, contact numbers, and "good morning" for a daily briefing.
+- **Chats are saved**; open old ones from the history button. Lists and memories are on the list button.
 
 ## First run
 1. Install the APK from **Releases** (latest).
