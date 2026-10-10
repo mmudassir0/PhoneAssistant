@@ -23,19 +23,22 @@ public final class CommandParser {
 
     public enum Type {
         ALARM, TIMER, REMINDER, CALL, OPEN_APP, TIME, DATE, BATTERY,
-        NOTIFICATIONS, NEWS, WEATHER, FLASHLIGHT_ON, FLASHLIGHT_OFF, NEW_CHAT
+        NOTIFICATIONS, NEWS, WEATHER, FLASHLIGHT_ON, FLASHLIGHT_OFF, NEW_CHAT,
+        OPEN_URL, WEB_SEARCH, YOUTUBE_SEARCH,
+        /** Looks like a phone command we can't do: answer honestly instead of letting the AI pretend. */
+        UNSUPPORTED
     }
 
     /** A recognised command. Only the fields relevant to its type are set. */
     public static final class Command {
         public final Type type;
-        /** ALARM: time of day. */
+        /** ALARM: time of day (null = ask for it). */
         public LocalTime time;
         /** REMINDER: when to remind. */
         public LocalDateTime at;
         /** TIMER: length in seconds. */
         public long seconds;
-        /** REMINDER: what to remind about. CALL: who. OPEN_APP: app name. NOTIFICATIONS: app filter (may be null). */
+        /** REMINDER: what. CALL: who. OPEN_APP: app name. OPEN_URL: address. *_SEARCH: query. NOTIFICATIONS: app filter (may be null). */
         public String text;
 
         Command(Type type) { this.type = type; }
@@ -58,8 +61,9 @@ public final class CommandParser {
             return new Command(Type.NEW_CHAT);
 
         // ---- flashlight ----
-        if ((m = Pattern.compile("^(turn|switch|put) (on|off) (the )?(flash ?light|torch)$|^(turn|switch|put) (the )?(flash ?light|torch) (on|off)$|^(flash ?light|torch) (on|off)$").matcher(s)).find()) {
-            return new Command(s.contains(" off") ? Type.FLASHLIGHT_OFF : Type.FLASHLIGHT_ON);
+        if (s.matches(".*\\b(flash ?light|torch|flash)\\b.*") && !s.matches("^(what|how|why|where|which|who|is|does|can|do) .*")) {
+            if (s.matches(".*\\b(off|band|bund|close|disable|stop|deactivate)\\b.*")) return new Command(Type.FLASHLIGHT_OFF);
+            if (s.matches(".*\\b(on|open|start|enable|activate|turn|switch|light)\\b.*") || s.matches("(flash ?light|torch)")) return new Command(Type.FLASHLIGHT_ON);
         }
 
         // ---- timer (before alarm: "set a timer for 10 minutes") ----
@@ -81,11 +85,32 @@ public final class CommandParser {
         if (s.matches(".*\\b(alarm|wake me( up)?)\\b.*")) {
             // "Wake me up at 6" means morning; "alarm for 6" means whichever 6 comes next.
             LocalTime t = parseClock(s, now, !s.matches(".*\\bwake me( up)?\\b.*"));
-            if (t != null) {
-                Command c = new Command(Type.ALARM);
-                c.time = t;
-                return c;
-            }
+            Command c = new Command(Type.ALARM);
+            c.time = t; // null: the app asks "what time?"
+            // "Set an alarm", "set alarm at", or a time we couldn't read: ask for the time.
+            if (t != null || s.matches("^(set|create|add|make|put|wake)\\b.*") || s.matches("^(an |a |the |my )?alarm( at| for)?$")) return c;
+        }
+
+        // ---- web ----
+        if ((m = Pattern.compile("^(?:open|go to|visit|browse to|load)(?: the)?(?: website| site| page| link)? (?<u>(?:https?://)?[a-z0-9-]+(?:\\.[a-z0-9-]+)+(?:/\\S*)?)$").matcher(s)).find()) {
+            Command c = new Command(Type.OPEN_URL);
+            c.text = m.group("u");
+            return c;
+        }
+        if (s.matches("^(open|go to|start|launch)( the| my)? (browser|internet|web browser|chrome browser)( and.*)?$")) {
+            Command c = new Command(Type.OPEN_URL);
+            c.text = "https://www.google.com";
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:search|look up|find|play|watch)(?: for)? (?<q>.+?) on youtube$|^(?:search )?youtube(?: for)? (?<q2>.+)$|^(?:play|watch) (?<q3>.+?) (?:video|song)s?$").matcher(s)).find()) {
+            Command c = new Command(Type.YOUTUBE_SEARCH);
+            c.text = firstNonNull(m.group("q"), m.group("q2"), m.group("q3"));
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:search(?: the web| google| online| internet)?(?: for)?|google|look up|search for) (?<q>.+?)(?: on google| online| on the internet)?$").matcher(s)).find()) {
+            Command c = new Command(Type.WEB_SEARCH);
+            c.text = m.group("q");
+            return c;
         }
 
         // ---- call ----
@@ -122,6 +147,34 @@ public final class CommandParser {
         if (s.matches("(what('s| is) (the )?)?(latest |today's |top )?(news|headlines)( today| now)?|(tell|give|read) me the (latest )?(news|headlines)|what's happening( in the world)?"))
             return new Command(Type.NEWS);
 
+        // Sounds like an instruction for the phone that we can't do: say so honestly.
+        if (s.matches("^(turn|switch|set|send|text|message|whatsapp|book|order|pay|delete|install|uninstall|enable|disable|mute|unmute|increase|decrease|lower|raise|connect|disconnect|take|record|share|lock|unlock|shut ?down|restart|reboot) .*")
+                || s.matches(".*\\b(volume|brightness|wi-?fi|bluetooth|hotspot|airplane mode|do not disturb|screenshot|silent mode|mobile data)\\b.*")) {
+            Command c = new Command(Type.UNSUPPORTED);
+            c.text = s;
+            return c;
+        }
+
+        return null;
+    }
+
+    /**
+     * Short follow-ups that only make sense after the previous command, like "now off it" or
+     * "turn it off" after turning the flashlight on. Returns null if [input] isn't one.
+     */
+    public static Command followUp(String input, Type previous) {
+        if (previous == null || input == null) return null;
+        String s = normalize(input);
+        boolean flash = previous == Type.FLASHLIGHT_ON || previous == Type.FLASHLIGHT_OFF;
+        if (flash && s.matches("^(now |ok |okay |and )?(please )?((turn|switch|put) )?(it |that |this )?(off|band|bund|close)( it| that| this| now| again| please)*$"))
+            return new Command(Type.FLASHLIGHT_OFF);
+        if (flash && s.matches("^(now |ok |okay |and )?(please )?((turn|switch|put) )?(it |that |this )?(on|back on)( it| that| this| now| again| please)*$"))
+            return new Command(Type.FLASHLIGHT_ON);
+        return null;
+    }
+
+    private static String firstNonNull(String... xs) {
+        for (String x : xs) if (x != null) return x;
         return null;
     }
 
@@ -268,7 +321,7 @@ public final class CommandParser {
         s = s.replace("a.m.", "am").replace("p.m.", "pm").replace("a. m.", "am").replace("p. m.", "pm");
         s = s.replaceAll("(\\d)(am|pm)\\b", "$1 $2");
         s = s.replaceAll("[?!.,]+$", "").replaceAll("[,]", "");
-        s = s.replaceAll("^(hey |ok |okay |hi )?(assistant |google )?", "");
+        s = s.replaceAll("^((hey|ok|okay|hi) (assistant|google) |(hey|ok|okay|hi) |assistant )", "");
         s = s.replaceAll("^(can you |could you |would you |will you |please |i want you to |i need you to )+", "");
         s = s.replaceAll("\\s+(please|for me)$", "");
         s = s.replaceAll("\\s+", " ").trim();

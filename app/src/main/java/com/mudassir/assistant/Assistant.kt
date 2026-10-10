@@ -66,8 +66,10 @@ object Assistant {
     private val _events = MutableSharedFlow<UiEvent>(extraBufferCapacity = 8)
     val events: SharedFlow<UiEvent> = _events
 
-    /** A reminder waiting for its time ("remind me to buy milk" → "when?"). */
-    private var pendingReminder: String? = null
+    /** A question we asked ("what time?"): the next answer is read as this prefix + answer. */
+    private var pendingPrefix: String? = null
+    /** The last phone command, so "turn it off" after "flashlight on" works. */
+    private var lastCommand: CommandParser.Type? = null
     private var job: Job? = null
     private var speaker: Speaker? = null
 
@@ -105,7 +107,8 @@ object Assistant {
 
     fun newChat() {
         stop()
-        pendingReminder = null
+        pendingPrefix = null
+        lastCommand = null
         _messages.value = emptyList()
         LocalBrain.reset()
     }
@@ -116,12 +119,15 @@ object Assistant {
         _busy.value = true
         try {
             val now = LocalDateTime.now()
-            val waiting = pendingReminder
-            pendingReminder = null
-            val command = if (waiting != null && CommandParser.parse(text, now) == null) {
-                // Answer to "when should I remind you?"
-                CommandParser.parse("remind me to $waiting $text", now)
-            } else CommandParser.parse(text, now)
+            val waiting = pendingPrefix
+            pendingPrefix = null
+            val direct = CommandParser.parse(text, now)
+            val command = direct
+                // Answer to a question we asked, like "what time?"
+                ?: waiting?.let { CommandParser.parse(it + text, now)?.takeIf { c -> c.type != CommandParser.Type.ALARM || c.time != null } }
+                // "Turn it off" right after "flashlight on"
+                ?: CommandParser.followUp(text, lastCommand)
+            lastCommand = command?.type
 
             if (command == null) {
                 chat(ctx, history(), speak)
@@ -143,7 +149,7 @@ object Assistant {
             add(ChatMessage(ids.getAndIncrement(), fromUser = false, text = result.reply, source = "phone"))
             if (speak) speaker?.say(result.reply)
             result.intent?.let { _events.emit(UiEvent.Open(it)) }
-            result.askReminderTime?.let { pendingReminder = it }
+            result.answerPrefix?.let { pendingPrefix = it }
             result.summarize?.let { prompt ->
                 chat(ctx, listOf(Turn(Turn.SYSTEM, systemPrompt(online = false)), Turn(Turn.USER, prompt)), speak)
             }
@@ -203,8 +209,13 @@ object Assistant {
 
     /** The conversation so far, for the brain. */
     private fun history(): List<Turn> {
-        val turns = _messages.value.filter { !it.pending && it.text.isNotBlank() }
-            .takeLast(12)
+        val all = _messages.value.filter { !it.pending && it.text.isNotBlank() }
+        // Leave out phone-command exchanges ("Flashlight on.") so the AI doesn't learn to
+        // imitate them and pretend it controls the phone.
+        val kept = all.filterIndexed { i, m ->
+            if (m.fromUser) all.getOrNull(i + 1)?.source != "phone" else m.source != "phone"
+        }
+        val turns = kept.takeLast(12)
             .map { Turn(if (it.fromUser) Turn.USER else Turn.ASSISTANT, it.text) }
             .dropWhile { it.role != Turn.USER }
         return listOf(Turn(Turn.SYSTEM, "")) + turns
@@ -223,7 +234,10 @@ object Assistant {
         else "Answer in 1 to 3 short sentences."
         return "You are a helpful voice assistant on the user's Android phone in Pakistan. $length " +
             "Use plain text without markdown, because answers may be read aloud. " +
-            "If you don't know something or it needs live information, say so briefly. It is now $now."
+            "If you don't know something or it needs live information, say so briefly. " +
+            "IMPORTANT: you cannot control the phone or any app. Never claim you did something (turned on or off, " +
+            "set, opened, called, sent). If asked to do something on the phone, say you can't, and suggest a clear " +
+            "command like 'turn off the flashlight' or 'set an alarm for 7 am'. It is now $now."
     }
 
     private fun setSource(id: Long, source: String) =

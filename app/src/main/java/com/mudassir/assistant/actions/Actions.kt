@@ -39,8 +39,8 @@ object Actions {
         val permissions: List<String> = emptyList(),
         /** Text the AI should summarise (notifications), with this instruction. */
         val summarize: String? = null,
-        /** Reminder still needs a time: the next answer completes it. */
-        val askReminderTime: String? = null,
+        /** A question was asked ("what time?"): the next answer is read as this prefix + answer. */
+        val answerPrefix: String? = null,
         /** Clear the conversation. */
         val newChat: Boolean = false
     )
@@ -50,8 +50,9 @@ object Actions {
 
     suspend fun run(ctx: Context, c: Command, online: Boolean): Result = when (c.type) {
         Type.ALARM -> {
-            val t = c.time!!
-            Result(
+            val t = c.time
+            if (t == null) Result("What time should I set the alarm for?", answerPrefix = "set an alarm for ")
+            else Result(
                 "Alarm set for ${t.format(TIME)}.",
                 Intent(AlarmClock.ACTION_SET_ALARM)
                     .putExtra(AlarmClock.EXTRA_HOUR, t.hour)
@@ -70,7 +71,7 @@ object Actions {
         Type.REMINDER -> {
             val at = c.at
             if (at == null) {
-                Result("When should I remind you to ${c.text}?", askReminderTime = c.text)
+                Result("When should I remind you to ${c.text}?", answerPrefix = "remind me to ${c.text} ")
             } else {
                 val ms = at.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 Reminders.add(ctx, ms, c.text)
@@ -119,6 +120,29 @@ object Actions {
         }
 
         Type.NEW_CHAT -> Result("Okay, starting fresh.", newChat = true)
+
+        Type.OPEN_URL -> {
+            val raw = c.text.orEmpty()
+            val url = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
+            Result("Opening ${Uri.parse(url).host ?: raw}.", Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+
+        Type.WEB_SEARCH -> Result(
+            "Searching for \"${c.text}\".",
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.text)))
+        )
+
+        Type.YOUTUBE_SEARCH -> Result(
+            "Searching YouTube for \"${c.text}\".",
+            // Opens in the YouTube app if installed, otherwise the browser.
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.text)))
+        )
+
+        Type.UNSUPPORTED -> Result(
+            "I can't do that on your phone yet. Right now I can: set alarms, timers and reminders, call contacts, " +
+                "open apps and websites, search Google or YouTube, turn the flashlight on or off, " +
+                "tell the time, date, battery, weather and news, and summarize your notifications."
+        )
     }
 
     // ---- calls ----

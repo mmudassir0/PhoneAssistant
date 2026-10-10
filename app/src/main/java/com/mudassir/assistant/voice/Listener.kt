@@ -56,23 +56,27 @@ class Listener(
 
             override fun onError(error: Int) {
                 onState(false)
-                val languageMissing = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
-                    error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
-                if (useOnDevice && (languageMissing || error == SpeechRecognizer.ERROR_SERVER || error == SpeechRecognizer.ERROR_CLIENT)) {
-                    // On-device model missing: use the regular recogniser from now on.
+                val nothingHeard = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                if (useOnDevice && !nothingHeard && error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                    // The on-device recogniser failed (missing language pack, disconnected (11),
+                    // busy…): use the phone's regular recogniser from now on, and retry right away.
                     onDevice = false
-                    onError("Offline speech for $language isn't installed, so I'm using online speech. " +
-                        "To fix: Settings → System → Languages → Speech → download $language.")
-                    start(language)
+                    // Restart after this callback returns: destroying a recogniser inside its own callback can crash.
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { start(language) }
                     return
                 }
                 onError(
                     when (error) {
-                        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I didn't catch that."
+                        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I didn't catch that. Tap the mic and try again."
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "I need microphone permission."
-                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech needs internet on this phone right now."
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy, try again."
-                        else -> "Speech error ($error)."
+                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                            "Speech needs internet right now. For offline speech: Settings → Offline speech → download English."
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY, 10 /* too many requests */ -> "The microphone is busy, try again in a moment."
+                        11 /* server disconnected */, SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_CLIENT ->
+                            "Speech service stopped. Try again; if it keeps happening, update the Google app."
+                        12, 13 /* language not supported / unavailable */ ->
+                            "Speech isn't available for $language. Change the speech language in Settings."
+                        else -> "Speech didn't work (code $error). Try again."
                     }
                 )
             }
