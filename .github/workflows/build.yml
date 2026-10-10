@@ -1,0 +1,52 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run unit tests
+        run: |
+          chmod +x gradlew
+          set -o pipefail
+          ./gradlew testReleaseUnitTest --no-daemon 2>&1 | tee build.log
+      - name: Build release APK
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon 2>&1 | tee -a build.log
+          cp app/build/outputs/apk/release/app-release.apk PhoneAssistant.apk
+      # Surface compiler/test errors as annotations, readable without downloading logs.
+      - name: Report errors
+        if: failure()
+        run: |
+          {
+            grep -E "^e: |error:|Error:|FAILED|What went wrong|Misunderstood|expected" -A4 build.log || true
+          } | grep -v "^--$" | head -80 > errors.txt
+          msg=$(sed -e 's/%/%25/g' errors.txt | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Build failed::${msg}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneAssistant-apk
+          path: PhoneAssistant.apk
+      # Pushes to main are published as the latest release; the app's updater installs it.
+      - uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Phone Assistant build ${{ github.run_number }}
+          make_latest: true
+          files: PhoneAssistant.apk
+          body: ${{ github.event.head_commit.message }}

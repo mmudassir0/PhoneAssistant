@@ -1,0 +1,20 @@
+<resources>
+    <string-array name="speak_labels">
+        <item>When I use the mic</item><item>Always</item><item>Never</item>
+    </string-array>
+    <string-array name="speak_values">
+        <item>mic</item><item>always</item><item>never</item>
+    </string-array>
+    <string-array name="lang_labels">
+        <item>English (US)</item><item>English (UK)</item><item>English (India)</item><item>Urdu</item>
+    </string-array>
+    <string-array name="lang_values">
+        <item>en-US</item><item>en-GB</item><item>en-IN</item><item>ur-PK</item>
+    </string-array>
+    <string-array name="thread_labels">
+        <item>2 (coolest, slower)</item><item>4 (recommended)</item><item>6</item><item>8 (all cores)</item>
+    </string-array>
+    <string-array name="thread_values">
+        <item>2</item><item>4</item><item>6</item><item>8</item>
+    </string-array>
+</resources>

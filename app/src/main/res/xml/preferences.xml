@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Offline brain">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="model"
+            app:title="Offline AI model" />
+        <ListPreference
+            app:defaultValue="4"
+            app:entries="@array/thread_labels"
+            app:entryValues="@array/thread_values"
+            app:iconSpaceReserved="false"
+            app:key="threads"
+            app:title="Speed (CPU threads)"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Online brain (optional)">
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:iconSpaceReserved="false"
+            app:key="online_mode"
+            app:summary="Use Google Gemini for questions when you have internet. Falls back to offline automatically."
+            app:title="Online mode" />
+        <EditTextPreference
+            app:iconSpaceReserved="false"
+            app:key="gemini_key"
+            app:title="Gemini API key" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="get_key"
+            app:summary="Free at Google AI Studio. Sign in with Google and tap Create API key."
+            app:title="Get a free key" />
+        <EditTextPreference
+            app:defaultValue="gemini-flash-latest"
+            app:iconSpaceReserved="false"
+            app:key="gemini_model"
+            app:title="Gemini model"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Voice">
+        <ListPreference
+            app:defaultValue="mic"
+            app:entries="@array/speak_labels"
+            app:entryValues="@array/speak_values"
+            app:iconSpaceReserved="false"
+            app:key="speak_replies"
+            app:title="Read replies aloud"
+            app:useSimpleSummaryProvider="true" />
+        <ListPreference
+            app:defaultValue="en-US"
+            app:entries="@array/lang_labels"
+            app:entryValues="@array/lang_values"
+            app:iconSpaceReserved="false"
+            app:key="speech_lang"
+            app:title="Speech language"
+            app:useSimpleSummaryProvider="true" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="speech_settings"
+            app:summary="Download the offline speech pack for your language here, so listening works without internet."
+            app:title="Offline speech" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Phone">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="notification_access"
+            app:title="Notification access" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="reminders"
+            app:selectable="false"
+            app:title="Upcoming reminders" />
+        <EditTextPreference
+            app:defaultValue="Lahore"
+            app:iconSpaceReserved="false"
+            app:key="weather_city"
+            app:title="Weather city"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="App">
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:iconSpaceReserved="false"
+            app:key="update_check"
+            app:summary="Look for a new version on GitHub when the app opens"
+            app:title="Check for updates automatically" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="check_now"
+            app:title="Check for updates now" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="version"
+            app:selectable="false"
+            app:title="Version" />
+    </PreferenceCategory>
+</PreferenceScreen>

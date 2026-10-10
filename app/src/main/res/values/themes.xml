@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.Assistant" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#3F51B5</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#DEE0FF</item>
+        <item name="colorOnPrimaryContainer">#00105C</item>
+    </style>
+</resources>
