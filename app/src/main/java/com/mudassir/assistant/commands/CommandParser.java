@@ -25,6 +25,7 @@ public final class CommandParser {
         ALARM, TIMER, REMINDER, CALL, OPEN_APP, TIME, DATE, BATTERY,
         NOTIFICATIONS, NEWS, WEATHER, FLASHLIGHT_ON, FLASHLIGHT_OFF, NEW_CHAT,
         OPEN_URL, WEB_SEARCH, YOUTUBE_SEARCH,
+        WHATSAPP, SMS, VOLUME, BRIGHTNESS, RINGER, SETTING, HELP,
         /** Looks like a phone command we can't do: answer honestly instead of letting the AI pretend. */
         UNSUPPORTED
     }
@@ -38,14 +39,17 @@ public final class CommandParser {
         public LocalDateTime at;
         /** TIMER: length in seconds. */
         public long seconds;
-        /** REMINDER: what. CALL: who. OPEN_APP: app name. OPEN_URL: address. *_SEARCH: query. NOTIFICATIONS: app filter (may be null). */
+        /** WHATSAPP/SMS: message body (null = ask). */
+        public String message;
+        /** REMINDER: what. CALL/WHATSAPP/SMS: who. VOLUME/BRIGHTNESS: up|down|max|min|mute|unmute|status or a percent. RINGER: normal|vibrate|silent. SETTING: wifi|bluetooth|data|airplane|hotspot|location. OPEN_APP: app name. OPEN_URL: address. *_SEARCH: query. NOTIFICATIONS: app filter (may be null). */
         public String text;
 
         Command(Type type) { this.type = type; }
 
         @Override public String toString() {
             return type + (time != null ? " time=" + time : "") + (at != null ? " at=" + at : "")
-                + (seconds > 0 ? " seconds=" + seconds : "") + (text != null ? " text='" + text + "'" : "");
+                + (seconds > 0 ? " seconds=" + seconds : "") + (text != null ? " text='" + text + "'" : "")
+                + (message != null ? " message='" + message + "'" : "");
         }
     }
 
@@ -56,6 +60,9 @@ public final class CommandParser {
         String s = normalize(input);
         if (s.isEmpty()) return null;
         Matcher m;
+
+        if (s.matches("help|what can you do|what (are|is) your (features|commands|skills)|what commands (do you know|can i use)|how do i use (you|this app)"))
+            return new Command(Type.HELP);
 
         if (s.matches("(start a )?(new|fresh) (chat|conversation)|clear (the )?chat|forget (everything|that|it)"))
             return new Command(Type.NEW_CHAT);
@@ -113,6 +120,46 @@ public final class CommandParser {
             return c;
         }
 
+        // ---- WhatsApp / SMS ----
+        if ((m = Pattern.compile("^(?:send |write )?(?:a |an )?(?<kind>whatsapp|text|sms|message|msg)(?: message)? (?:to )?(?<who>.+?)(?:(?: saying| that says| that| says|:| and say| and tell (?:him|her|them)(?: that)?) (?<msg>.+))?$").matcher(s)).find()
+                || (m = Pattern.compile("^tell (?<who>.+?) on (?<kind>whatsapp|text|sms)(?: that)? (?<msg>.+)$").matcher(s)).find()) {
+            String kind = m.group("kind");
+            if (m.group("who").matches("(me|myself|us)( .*)?")) return null; // "text me a joke" is a question
+            Command c = new Command(kind.equals("text") || kind.equals("sms") ? Type.SMS : Type.WHATSAPP);
+            c.text = m.group("who").replaceFirst(" on whatsapp$", "").trim();
+            c.message = m.group("msg") == null ? null : m.group("msg").trim();
+            return c;
+        }
+
+        // ---- volume / brightness / sound mode ----
+        if ((s.matches(".*\\b(volume|louder|quieter|softer)\\b.*") && !s.matches("^(what|how|why|which|who|when) .*(of|for|in) (a|an|the) .*")) || s.matches("^(mute|unmute)( the)?( phone| sound| volume| media| music)?$")) {
+            Command c = new Command(Type.VOLUME);
+            c.text = level(s, "louder|up|increase|raise|higher|turn up|more", "quieter|softer|down|decrease|lower|reduce|turn down|less");
+            return c;
+        }
+        if (s.matches(".*\\b(brightness|brighter|dimmer|darker)\\b.*") && !s.matches("^(what|how|why) .*")) {
+            Command c = new Command(Type.BRIGHTNESS);
+            c.text = level(s, "brighter|up|increase|raise|higher|turn up|more", "dimmer|darker|down|decrease|lower|reduce|turn down|less");
+            return c;
+        }
+        if (s.matches(".*\\b(silent|vibrate|vibration|ringer|ring mode|sound mode|normal mode|general mode|do not disturb|dnd)\\b.*") && !s.matches("^(what|how|why) .*")) {
+            Command c = new Command(Type.RINGER);
+            c.text = s.matches(".*\\b(vibrat\\w*)\\b.*") ? "vibrate"
+                : s.matches(".*\\b(normal|general|ring(er)? on|sound on|turn off (silent|do not disturb|dnd))\\b.*") ? "normal" : "silent";
+            return c;
+        }
+
+        // ---- connection settings (Android only lets apps open these switches) ----
+        if ((m = Pattern.compile("\\b(wi-?fi|wifi|bluetooth|mobile data|cellular data|internet|airplane mode|flight mode|aeroplane mode|hotspot|location|gps)\\b").matcher(s)).find()
+                && s.matches("^(turn|switch|enable|disable|open|start|stop|connect|disconnect|put|activate|deactivate|show|on|off)\\b.*|.*\\b(on|off)$")) {
+            String w = m.group(1);
+            Command c = new Command(Type.SETTING);
+            c.text = w.startsWith("wi") ? "wifi" : w.equals("bluetooth") ? "bluetooth"
+                : w.contains("data") || w.equals("internet") ? "data"
+                : w.contains("mode") ? "airplane" : w.equals("hotspot") ? "hotspot" : "location";
+            return c;
+        }
+
         // ---- call ----
         if ((m = Pattern.compile("^(?:please )?(?:call|phone|dial|ring) (.+?)(?: please| now| for me)?$").matcher(s)).find()) {
             Command c = new Command(Type.CALL);
@@ -148,8 +195,8 @@ public final class CommandParser {
             return new Command(Type.NEWS);
 
         // Sounds like an instruction for the phone that we can't do: say so honestly.
-        if (s.matches("^(turn|switch|set|send|text|message|whatsapp|book|order|pay|delete|install|uninstall|enable|disable|mute|unmute|increase|decrease|lower|raise|connect|disconnect|take|record|share|lock|unlock|shut ?down|restart|reboot) .*")
-                || s.matches(".*\\b(volume|brightness|wi-?fi|bluetooth|hotspot|airplane mode|do not disturb|screenshot|silent mode|mobile data)\\b.*")) {
+        if (s.matches("^(turn|switch|set|send|book|order|pay|delete|install|uninstall|enable|disable|increase|decrease|lower|raise|connect|disconnect|take|record|share|lock|unlock|shut ?down|restart|reboot) .*")
+                || s.matches(".*\\b(screenshot|screen record\\w*)\\b.*")) {
             Command c = new Command(Type.UNSUPPORTED);
             c.text = s;
             return c;
@@ -171,6 +218,20 @@ public final class CommandParser {
         if (flash && s.matches("^(now |ok |okay |and )?(please )?((turn|switch|put) )?(it |that |this )?(on|back on)( it| that| this| now| again| please)*$"))
             return new Command(Type.FLASHLIGHT_ON);
         return null;
+    }
+
+    /** "max", "min", "mute", "unmute", "up", "down", "status" or a percentage like "40". */
+    private static String level(String s, String upWords, String downWords) {
+        Matcher pct = Pattern.compile("\\b(\\d{1,3}) ?(%|percent)?").matcher(s);
+        if (pct.find()) return String.valueOf(Math.min(100, Integer.parseInt(pct.group(1))));
+        if (s.matches(".*\\bunmute\\b.*")) return "unmute";
+        if (s.matches(".*\\b(mute|silence|zero|off)\\b.*")) return "mute";
+        if (s.matches(".*\\b(max|maximum|full|highest|all the way up)\\b.*")) return "max";
+        if (s.matches(".*\\b(min|minimum|lowest|all the way down)\\b.*")) return "min";
+        if (s.matches(".*\\b(half|medium|middle)\\b.*")) return "50";
+        if (s.matches(".*\\b(" + upWords + ")\\b.*")) return "up";
+        if (s.matches(".*\\b(" + downWords + ")\\b.*")) return "down";
+        return "status";
     }
 
     private static String firstNonNull(String... xs) {

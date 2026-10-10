@@ -21,6 +21,9 @@ import com.mudassir.assistant.actions.NotificationCollector
 import com.mudassir.assistant.actions.Reminders
 import com.mudassir.assistant.ai.LocalBrain
 import com.mudassir.assistant.ai.ModelManager
+import com.mudassir.assistant.wake.WakeModel
+import com.mudassir.assistant.wake.WakeWordService
+import androidx.preference.SwitchPreferenceCompat
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -29,6 +32,7 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
+        findViewById<android.view.View>(R.id.backButton).setOnClickListener { finish() }
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.settingsRoot)) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
@@ -81,6 +85,37 @@ class SettingsActivity : AppCompatActivity() {
                     .onFailure { startActivity(Intent(AndroidSettings.ACTION_SETTINGS)) }
                 true
             }
+            findPreference<SwitchPreferenceCompat>("wake_word")?.setOnPreferenceChangeListener { _, value ->
+                val on = value as Boolean
+                if (on && androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    android.widget.Toast.makeText(ctx, "Tap the mic on the main screen once to allow the microphone, then turn this on.", android.widget.Toast.LENGTH_LONG).show()
+                    return@setOnPreferenceChangeListener false
+                }
+                com.mudassir.assistant.Settings(ctx).wakeWord = on // saved before starting, the service checks it
+                if (on) {
+                    if (!AndroidSettings.canDrawOverlays(ctx)) {
+                        MaterialAlertDialogBuilder(ctx)
+                            .setTitle("One more permission")
+                            .setMessage("So \"Hey Assistant\" can open the app while you're in another app, allow " +
+                                "\"Display over other apps\" on the next screen. Without it you'll get a notification to tap instead.")
+                            .setPositiveButton("Open settings") { _, _ -> startActivity(overlayIntent()) }
+                            .setNegativeButton("Skip", null)
+                            .show()
+                    }
+                    if (WakeModel.state.value == WakeModel.State.Ready) WakeWordService.start(ctx)
+                    else WakeModel.download(ctx) { WakeWordService.start(ctx) }
+                } else {
+                    WakeWordService.stop(ctx)
+                }
+                true
+            }
+            findPreference<Preference>("overlay")?.setOnPreferenceClickListener {
+                startActivity(overlayIntent())
+                true
+            }
+
             findPreference<Preference>("check_now")?.setOnPreferenceClickListener {
                 UpdateUi.check(requireActivity() as AppCompatActivity, manual = true)
                 true
@@ -90,14 +125,32 @@ class SettingsActivity : AppCompatActivity() {
 
             lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    ModelManager.state.collect { renderModel(it) }
+                    launch { ModelManager.state.collect { renderModel(it) } }
+                    launch {
+                        WakeModel.state.collect { st ->
+                            findPreference<Preference>("wake_model")?.summary = when (st) {
+                                WakeModel.State.Ready -> "Installed (about 40 MB)"
+                                is WakeModel.State.Downloading -> "Downloading ${st.percent}%…"
+                                WakeModel.State.Unpacking -> "Unpacking…"
+                                is WakeModel.State.Failed -> "Download failed (${st.message}). Turn the switch off and on to retry."
+                                WakeModel.State.Missing -> "Downloads automatically (about 40 MB) when you turn on the wake word"
+                            }
+                        }
+                    }
                 }
             }
         }
 
+        private fun overlayIntent() =
+            Intent(AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${requireContext().packageName}"))
+
         override fun onResume() {
             super.onResume()
             val ctx = requireContext()
+            WakeModel.refresh(ctx)
+            findPreference<Preference>("overlay")?.summary =
+                if (AndroidSettings.canDrawOverlays(ctx)) "Allowed: \"Hey Assistant\" opens the app directly"
+                else "Not allowed: tap to allow \"Display over other apps\" so the wake word can open the app"
             findPreference<Preference>("notification_access")?.summary =
                 if (NotificationCollector.isEnabled(ctx)) "On: \"what did I miss?\" works"
                 else "Off: tap to allow, so I can summarise your messages"

@@ -22,6 +22,11 @@ class Settings(ctx: Context) {
     val weatherCity get() = p.getString(K_CITY, "Lahore")?.trim()?.ifEmpty { null } ?: "Lahore"
     val autoUpdateCheck get() = p.getBoolean(K_UPDATE_CHECK, true)
 
+    /** Listen for "Hey Assistant" in the background. */
+    var wakeWord: Boolean
+        get() = p.getBoolean(K_WAKE, false)
+        set(v) = p.edit().putBoolean(K_WAKE, v).apply()
+
     var lastUpdateCheck: Long
         get() = p.getLong("last_update_check", 0)
         set(v) = p.edit().putLong("last_update_check", v).apply()
@@ -40,6 +45,7 @@ class Settings(ctx: Context) {
         const val K_SPEECH_LANG = "speech_lang"
         const val K_CITY = "weather_city"
         const val K_UPDATE_CHECK = "update_check"
+        const val K_WAKE = "wake_word"
 
         /** Google's alias for its newest Flash model. Editable in Settings in case it changes. */
         const val DEFAULT_GEMINI_MODEL = "gemini-flash-latest"

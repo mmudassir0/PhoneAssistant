@@ -18,6 +18,13 @@
     <!-- "Call Ali": find the contact and call (asked only when you first use it) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- "Hey Assistant": listen in the background, and open the app when heard -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Brightness and silent mode (each asked only when you first use it) -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- In-app updater -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -31,6 +38,9 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- "Send a WhatsApp to Ali" -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
         <!-- Speech recognition and text-to-speech engines -->
         <intent>
             <action android:name="android.speech.RecognitionService" />
@@ -68,6 +78,16 @@
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:label="Settings" />
+
+        <activity
+            android:name=".ui.HistoryActivity"
+            android:exported="false"
+            android:label="Chats" />
+
+        <service
+            android:name=".wake.WakeWordService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Quick Settings tile: swipe down, tap Assistant, talk -->
         <service

@@ -1,0 +1,13 @@
+<resources>
+    <!-- Night indigo: calm, so the orb is the one bright thing on screen. -->
+    <color name="bg">#15132E</color>
+    <color name="surface">#1F1C3F</color>
+    <color name="surface_high">#2A2655</color>
+    <color name="outline">#3A3566</color>
+    <color name="user_bubble">#3B3478</color>
+    <color name="text">#F1EEFF</color>
+    <color name="text_dim">#A9A4D4</color>
+    <color name="teal">#3EE6C1</color>
+    <color name="violet">#8B7BFF</color>
+    <color name="idle_dot">#6F6A99</color>
+</resources>
