@@ -39,6 +39,14 @@ jobs:
           msg=$(sed -e 's/%/%25/g' errors.txt | awk '{printf "%s%%0A", $0}')
           echo "::error title=Build failed::${msg}"
 
+      # The AI engine and the wake-word engine are native code: make sure both made it into the APK.
+      - name: Check native libraries
+        run: |
+          libs=$(unzip -l PhoneAssistant.apk | grep -o 'lib/arm64-v8a/[^ ]*\.so' | sort | tr '\n' ' ')
+          echo "::notice title=Native libraries::$libs"
+          for lib in libllama_jni.so libvosk.so libjnidispatch.so; do
+            echo "$libs" | grep -q "$lib" || { echo "::error title=Missing native library::$lib"; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: PhoneAssistant-apk
