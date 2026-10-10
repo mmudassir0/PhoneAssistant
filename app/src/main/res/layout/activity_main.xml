@@ -7,53 +7,56 @@
     android:background="@color/bg"
     android:orientation="vertical">
 
-    <!-- Top bar -->
+    <!-- Top bar: title and status on the left (shrinks if needed), actions always visible on the right -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="64dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="20dp"
-        android:paddingEnd="8dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Assistant"
-            android:textColor="@color/text"
-            android:textSize="22sp"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="-0.01" />
+        android:paddingEnd="4dp">
 
         <LinearLayout
-            android:id="@+id/statusPill"
-            android:layout_width="wrap_content"
-            android:layout_height="24dp"
-            android:layout_marginStart="12dp"
-            android:background="@drawable/bg_status"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="10dp">
-
-            <View
-                android:id="@+id/statusDot"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
-                android:background="@drawable/dot" />
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
 
             <TextView
-                android:id="@+id/statusText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:textColor="@color/text_dim"
-                android:textSize="12sp" />
-        </LinearLayout>
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="-0.01"
+                android:maxLines="1"
+                android:text="Assistant"
+                android:textColor="@color/text"
+                android:textSize="22sp" />
 
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
+            <LinearLayout
+                android:id="@+id/statusPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/statusDot"
+                    android:layout_width="7dp"
+                    android:layout_height="7dp"
+                    android:background="@drawable/dot" />
+
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:maxLines="1"
+                    android:textColor="@color/text_dim"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
 
         <ImageButton
             android:id="@+id/notesButton"
