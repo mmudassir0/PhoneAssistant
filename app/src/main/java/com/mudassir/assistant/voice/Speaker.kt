@@ -2,6 +2,11 @@ package com.mudassir.assistant.voice
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.Locale
 
 /**
@@ -14,9 +19,23 @@ class Speaker(ctx: Context) {
     private val pending = StringBuilder()
     private var utterance = 0
 
+    private val queued = AtomicInteger(0)
+    private val _speaking = MutableStateFlow(false)
+    /** True while a reply is being read aloud (drives the orb animation). */
+    val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
+
     private val tts: TextToSpeech = TextToSpeech(ctx.applicationContext) { status ->
         ready = status == TextToSpeech.SUCCESS
-        if (ready) runCatching { tts.language = Locale.US }
+        if (ready) {
+            runCatching { tts.language = Locale.US }
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(id: String?) { _speaking.value = true }
+                override fun onDone(id: String?) { if (queued.decrementAndGet() <= 0) { queued.set(0); _speaking.value = false } }
+                @Deprecated("Deprecated in Java")
+                override fun onError(id: String?) { onDone(id) }
+                override fun onStop(id: String?, interrupted: Boolean) { queued.set(0); _speaking.value = false }
+            })
+        }
     }
 
     /** Add streamed text; speaks every finished sentence. */
@@ -44,11 +63,14 @@ class Speaker(ctx: Context) {
     private fun speak(text: String) {
         val clean = text.replace(Regex("[*_#`>]"), "").replace(Regex("\\s+"), " ").trim()
         if (!ready || clean.isEmpty()) return
+        queued.incrementAndGet()
         tts.speak(clean, TextToSpeech.QUEUE_ADD, null, "u${utterance++}")
     }
 
     fun stop() {
         pending.clear()
+        queued.set(0)
+        _speaking.value = false
         if (ready) tts.stop()
     }
 

@@ -2,54 +2,57 @@ package com.mudassir.assistant.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.color.MaterialColors
 import com.mudassir.assistant.ChatMessage
-import com.mudassir.assistant.databinding.ItemMessageBinding
+import com.mudassir.assistant.databinding.ItemAssistantBinding
+import com.mudassir.assistant.databinding.ItemUserBinding
 
-class ChatAdapter : ListAdapter<ChatMessage, ChatAdapter.Holder>(DIFF) {
+class ChatAdapter : ListAdapter<ChatMessage, RecyclerView.ViewHolder>(DIFF) {
 
-    class Holder(val b: ItemMessageBinding) : RecyclerView.ViewHolder(b.root)
+    class UserHolder(val b: ItemUserBinding) : RecyclerView.ViewHolder(b.root)
+    class AssistantHolder(val b: ItemAssistantBinding) : RecyclerView.ViewHolder(b.root)
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-        Holder(ItemMessageBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+    override fun getItemViewType(position: Int) = if (getItem(position).fromUser) USER else ASSISTANT
 
-    override fun onBindViewHolder(holder: Holder, position: Int) {
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return if (viewType == USER) UserHolder(ItemUserBinding.inflate(inflater, parent, false))
+        else AssistantHolder(ItemAssistantBinding.inflate(inflater, parent, false))
+    }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val m = getItem(position)
-        val b = holder.b
-        val ctx = b.root.context
-        b.text.text = if (m.pending && m.text.isEmpty()) "…" else m.text
-        (b.bubble.layoutParams as FrameLayout.LayoutParams).gravity = if (m.fromUser) Gravity.END else Gravity.START
-        b.bubble.setCardBackgroundColor(
-            MaterialColors.getColor(
-                b.bubble,
-                if (m.fromUser) com.google.android.material.R.attr.colorPrimaryContainer
-                else com.google.android.material.R.attr.colorSurfaceContainerHigh
-            )
-        )
-        b.text.setTextColor(
-            MaterialColors.getColor(
-                b.text,
-                if (m.fromUser) com.google.android.material.R.attr.colorOnPrimaryContainer
-                else com.google.android.material.R.attr.colorOnSurface
-            )
-        )
-        b.source.isVisible = !m.fromUser && m.source != null
-        b.source.text = when (m.source) {
-            "offline" -> if (m.pending) "Offline brain · thinking" else "Offline brain"
-            "online" -> if (m.pending) "Gemini · thinking" else "Gemini"
-            "phone" -> "Phone"
-            else -> ""
+        val view = when (holder) {
+            is UserHolder -> {
+                holder.b.text.text = m.text
+                holder.b.text
+            }
+            is AssistantHolder -> {
+                val b = holder.b
+                val thinking = m.pending && m.text.isEmpty()
+                b.text.isVisible = !thinking
+                b.text.text = m.text
+                b.typing.isVisible = thinking
+                b.miniOrb.mode = if (m.pending) OrbView.Mode.THINKING else OrbView.Mode.IDLE
+                b.source.isVisible = !m.pending && m.source != null
+                b.source.text = when (m.source) {
+                    "offline" -> "Offline brain"
+                    "online" -> "Gemini"
+                    "phone" -> "Done on your phone"
+                    else -> ""
+                }
+                b.root
+            }
+            else -> return
         }
-        b.bubble.setOnLongClickListener {
+        view.setOnLongClickListener {
+            val ctx = it.context
             ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("message", m.text))
             Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
             true
@@ -57,6 +60,8 @@ class ChatAdapter : ListAdapter<ChatMessage, ChatAdapter.Holder>(DIFF) {
     }
 
     companion object {
+        private const val USER = 1
+        private const val ASSISTANT = 2
         private val DIFF = object : DiffUtil.ItemCallback<ChatMessage>() {
             override fun areItemsTheSame(a: ChatMessage, b: ChatMessage) = a.id == b.id
             override fun areContentsTheSame(a: ChatMessage, b: ChatMessage) = a == b

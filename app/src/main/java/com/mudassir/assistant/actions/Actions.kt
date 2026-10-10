@@ -3,7 +3,10 @@ package com.mudassir.assistant.actions
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.app.NotificationManager
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.os.Build
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.Uri
@@ -138,10 +141,23 @@ object Actions {
             Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.text)))
         )
 
+        Type.WHATSAPP, Type.SMS -> message(ctx, c)
+        Type.VOLUME -> volume(ctx, c.text ?: "status")
+        Type.BRIGHTNESS -> brightness(ctx, c.text ?: "status")
+        Type.RINGER -> ringer(ctx, c.text ?: "silent")
+        Type.SETTING -> setting(c.text ?: "wifi")
+
+        Type.HELP -> Result(
+            "Here's what I can do. Phone: alarms, timers, reminders, calls, WhatsApp and SMS messages, opening apps " +
+                "and websites, volume, brightness, silent mode, flashlight, and Wi-Fi or Bluetooth switches. " +
+                "Info: time, date, battery, weather and news. And you can ask me questions or chat, offline."
+        )
+
         Type.UNSUPPORTED -> Result(
-            "I can't do that on your phone yet. Right now I can: set alarms, timers and reminders, call contacts, " +
-                "open apps and websites, search Google or YouTube, turn the flashlight on or off, " +
-                "tell the time, date, battery, weather and news, and summarize your notifications."
+            "I can't do that on your phone yet. I can: set alarms, timers and reminders; call or message contacts " +
+                "on WhatsApp or SMS; open apps and websites; search Google or YouTube; control volume, brightness, " +
+                "silent mode and the flashlight; open Wi-Fi, Bluetooth and data switches; and tell the time, date, " +
+                "battery, weather and news."
         )
     }
 
@@ -237,6 +253,135 @@ object Actions {
             summarize = "Summarize these phone notifications in a few short sentences. Group by person or app, " +
                 "mention anything that needs a reply. Notifications:\n$text"
         )
+    }
+
+    // ---- messages ----
+
+    private fun message(ctx: Context, c: Command): Result {
+        val who = c.text.orEmpty()
+        val whatsapp = c.type == Type.WHATSAPP
+        val verb = if (whatsapp) "whatsapp" else "text"
+        val body = c.message ?: return Result("What should the message to $who say?", answerPrefix = "$verb $who saying ")
+        val digits = who.replace(Regex("[\\s-]"), "")
+        val (name, number) = if (digits.matches(Regex("\\+?\\d{3,15}"))) who to digits else {
+            if (!granted(ctx, Manifest.permission.READ_CONTACTS)) {
+                return Result("I need access to your contacts to message $who.", permissions = listOf(Manifest.permission.READ_CONTACTS))
+            }
+            findContact(ctx, who) ?: return Result("I couldn't find \"$who\" in your contacts.")
+        }
+        val text = body.replaceFirstChar { it.uppercase() }
+        if (!whatsapp) {
+            return Result(
+                "Your text to $name is ready. Tap send.",
+                Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", text)
+            )
+        }
+        val uri = Uri.parse("https://api.whatsapp.com/send?phone=${international(number)}&text=" + Uri.encode(text))
+        val pkg = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { installed(ctx, it) }
+        return Result(
+            if (pkg != null) "WhatsApp is open with your message to $name. Tap send." else "WhatsApp isn't installed, so I opened it in the browser.",
+            Intent(Intent.ACTION_VIEW, uri).apply { if (pkg != null) setPackage(pkg) }
+        )
+    }
+
+    /** 0300 1234567 → 923001234567 (WhatsApp needs the country code, without +). */
+    internal fun international(number: String): String {
+        val d = number.filter { it.isDigit() || it == '+' }
+        return when {
+            d.startsWith("+") -> d.drop(1)
+            d.startsWith("00") -> d.drop(2)
+            d.startsWith("0") && d.length == 11 -> "92" + d.drop(1)
+            d.length == 10 && d.startsWith("3") -> "92$d"
+            else -> d
+        }
+    }
+
+    private fun installed(ctx: Context, pkg: String) =
+        runCatching { ctx.packageManager.getPackageInfo(pkg, 0); true }.getOrDefault(false)
+
+    // ---- volume / brightness / ringer ----
+
+    private fun volume(ctx: Context, level: String): Result {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        val stream = AudioManager.STREAM_MUSIC
+        val max = am.getStreamMaxVolume(stream)
+        fun pct() = am.getStreamVolume(stream) * 100 / max
+        val flags = AudioManager.FLAG_SHOW_UI
+        when (level) {
+            "up" -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, flags) }
+            "down" -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, flags) }
+            "max" -> am.setStreamVolume(stream, max, flags)
+            "min" -> am.setStreamVolume(stream, 1, flags)
+            "mute" -> am.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, flags)
+            "unmute" -> am.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, flags)
+            "status" -> return Result("Media volume is at ${pct()}%.")
+            else -> am.setStreamVolume(stream, (level.toInt() * max + 50) / 100, flags)
+        }
+        return Result(if (level == "mute") "Media muted." else "Media volume ${pct()}%.")
+    }
+
+    private fun brightness(ctx: Context, level: String): Result {
+        val cr = ctx.contentResolver
+        val current = AndroidSettings.System.getInt(cr, AndroidSettings.System.SCREEN_BRIGHTNESS, 128)
+        if (level == "status") return Result("Brightness is at ${current * 100 / 255}%.")
+        if (!AndroidSettings.System.canWrite(ctx)) {
+            return Result(
+                "To change brightness I need the \"Modify system settings\" permission. Turn it on, then ask again.",
+                Intent(AndroidSettings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+            )
+        }
+        val target = when (level) {
+            "up" -> current + 64
+            "down" -> current - 64
+            "max" -> 255
+            "min", "mute" -> 10
+            "unmute" -> current
+            else -> level.toInt() * 255 / 100
+        }.coerceIn(5, 255)
+        AndroidSettings.System.putInt(cr, AndroidSettings.System.SCREEN_BRIGHTNESS_MODE, AndroidSettings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+        AndroidSettings.System.putInt(cr, AndroidSettings.System.SCREEN_BRIGHTNESS, target)
+        return Result("Brightness ${target * 100 / 255}%.")
+    }
+
+    private fun ringer(ctx: Context, mode: String): Result {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        // Switching to or from silent needs Do Not Disturb access on Android 7+.
+        if ((mode == "silent" || am.ringerMode == AudioManager.RINGER_MODE_SILENT) && !nm.isNotificationPolicyAccessGranted) {
+            return Result(
+                "To change silent mode I need Do Not Disturb access. Turn on Phone Assistant on the next screen, then ask again.",
+                Intent(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+            )
+        }
+        return try {
+            am.ringerMode = when (mode) {
+                "vibrate" -> AudioManager.RINGER_MODE_VIBRATE
+                "normal" -> AudioManager.RINGER_MODE_NORMAL
+                else -> AudioManager.RINGER_MODE_SILENT
+            }
+            Result(when (mode) { "vibrate" -> "Phone is on vibrate."; "normal" -> "Ringer is back on."; else -> "Phone is on silent." })
+        } catch (e: SecurityException) {
+            Result("Android didn't let me change the sound mode.", Intent(AndroidSettings.ACTION_SOUND_SETTINGS))
+        }
+    }
+
+    /** Android 10+ doesn't let apps flip these switches, so open the right panel instead. */
+    private fun setting(which: String): Result {
+        val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+        return when (which) {
+            "wifi" -> Result(
+                "Android only lets you switch Wi-Fi yourself, so here's the Wi-Fi switch.",
+                Intent(if (q) AndroidSettings.Panel.ACTION_WIFI else AndroidSettings.ACTION_WIFI_SETTINGS)
+            )
+            "bluetooth" -> Result("Here's Bluetooth: tap the switch.", Intent(AndroidSettings.ACTION_BLUETOOTH_SETTINGS))
+            "data" -> Result(
+                "Here are your mobile data and Wi-Fi switches.",
+                Intent(if (q) AndroidSettings.Panel.ACTION_INTERNET_CONNECTIVITY else AndroidSettings.ACTION_DATA_ROAMING_SETTINGS)
+            )
+            "airplane" -> Result("Here's airplane mode.", Intent(AndroidSettings.ACTION_AIRPLANE_MODE_SETTINGS))
+            "hotspot" -> Result("Here are the hotspot settings.", Intent(AndroidSettings.ACTION_WIRELESS_SETTINGS))
+            else -> Result("Here are the location settings.", Intent(AndroidSettings.ACTION_LOCATION_SOURCE_SETTINGS))
+        }
     }
 
     private fun granted(ctx: Context, perm: String) =

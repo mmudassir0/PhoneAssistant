@@ -13,6 +13,7 @@ class App : Application() {
             NotificationChannel(CH_REMINDERS, "Reminders", NotificationManager.IMPORTANCE_HIGH)
         )
         ModelManager.refresh(this)
+        com.mudassir.assistant.wake.WakeModel.refresh(this)
         Assistant.init(this)
     }
 

@@ -1,9 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#3F51B5" android:pathData="M54,4a50,50 0,1 1,0 100a50,50 0,1 1,0 -100z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M54,62c4.98,0 8.97,-4.02 8.97,-9L63,35c0,-4.98 -4.02,-9 -9,-9s-9,4.02 -9,9v18c0,4.98 4.02,9 9,9zM69.9,53c0,9 -7.62,15.3 -15.9,15.3S38.1,62 38.1,53H33c0,10.23 8.16,18.69 18,20.16V83h6v-9.84c9.84,-1.44 18,-9.9 18,-20.16h-5.1z" />
+    <!-- Night-indigo tile with the glowing orb -->
+    <path android:fillColor="#15132E" android:pathData="M54,2a52,52 0,1 1,0 104a52,52 0,1 1,0 -104z" />
+    <path android:pathData="M54,22a32,32 0,1 1,0 64a32,32 0,1 1,0 -64z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="44"
+                android:centerY="40"
+                android:gradientRadius="52"
+                android:type="radial">
+                <item android:color="#3EE6C1" android:offset="0" />
+                <item android:color="#8B7BFF" android:offset="0.55" />
+                <item android:color="#2B1F7A" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#FFFFFF" android:pathData="M54,60c3.32,0 5.98,-2.68 5.98,-6L60,42c0,-3.32 -2.68,-6 -6,-6s-6,2.68 -6,6v12c0,3.32 2.68,6 6,6zM64.6,54c0,6 -5.08,10.2 -10.6,10.2S43.4,60 43.4,54H40c0,6.82 5.44,12.46 12,13.44V74h4v-6.56c6.56,-0.96 12,-6.6 12,-13.44h-3.4z" />
 </vector>

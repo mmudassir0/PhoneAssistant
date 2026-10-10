@@ -40,6 +40,24 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Hey Assistant">
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:iconSpaceReserved="false"
+            app:key="wake_word"
+            app:summary="Say “Hey Assistant” to start talking, even with the app closed. Works offline; uses some battery."
+            app:title="Wake word" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="wake_model"
+            app:selectable="false"
+            app:title="Wake word model" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="overlay"
+            app:title="Open from the background" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:iconSpaceReserved="false" app:title="Voice">
         <ListPreference
             app:defaultValue="mic"

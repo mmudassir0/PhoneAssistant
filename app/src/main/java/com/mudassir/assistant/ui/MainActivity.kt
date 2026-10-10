@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -27,7 +28,11 @@ import com.mudassir.assistant.UiEvent
 import com.mudassir.assistant.ai.ModelManager
 import com.mudassir.assistant.databinding.ActivityMainBinding
 import com.mudassir.assistant.voice.Listener
+import com.mudassir.assistant.wake.WakeModel
+import com.mudassir.assistant.wake.WakeWordService
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import java.time.LocalTime
 
 class MainActivity : AppCompatActivity() {
 
@@ -65,43 +70,45 @@ class MainActivity : AppCompatActivity() {
 
         b.messages.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         b.messages.adapter = adapter
+        b.messages.itemAnimator?.changeDuration = 0 // streamed text updates shouldn't flash
 
         b.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        b.historyButton.setOnClickListener { startActivity(Intent(this, HistoryActivity::class.java)) }
         b.newChatButton.setOnClickListener { Assistant.newChat() }
         b.sendButton.setOnClickListener { sendTyped() }
         b.input.setOnEditorActionListener { _, id, _ ->
             if (id == EditorInfo.IME_ACTION_SEND) { sendTyped(); true } else false
         }
-        b.micButton.setOnClickListener {
-            when {
-                Assistant.busy.value -> Assistant.stop()
-                listening -> { listener.stop(); setListening(false) }
-                else -> startListening()
-            }
-        }
+        b.micArea.setOnClickListener { onOrbTap() }
+        b.bigOrb.setOnClickListener { onOrbTap() }
         b.downloadButton.setOnClickListener {
             if (ModelManager.state.value is ModelManager.State.Downloading) ModelManager.pause() else ModelManager.start(this)
         }
 
         listOf(
-            "What's the time?", "Set a timer for 5 minutes", "Remind me in 1 hour to drink water",
-            "What did I miss?", "Tell me a fun fact", "Turn on the flashlight"
+            "What can you do?", "Set a timer for 5 minutes", "Remind me in an hour to drink water",
+            "Weather today", "Tell me a fun fact", "Turn on the flashlight"
         ).forEach { text ->
             b.suggestions.addView(Chip(this).apply {
                 this.text = text
-                setOnClickListener { Assistant.send(this@MainActivity, text, byVoice = false) }
+                chipBackgroundColor = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.surface))
+                chipStrokeColor = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.outline))
+                chipStrokeWidth = resources.displayMetrics.density
+                setTextColor(ContextCompat.getColor(context, R.color.text))
+                setOnClickListener { send(if (text == "What can you do?") "help" else text) }
             })
         }
 
         listener = Listener(
             this,
-            onPartial = { b.input.setText(it); b.input.setSelection(it.length) },
+            onPartial = { b.liveText.text = it },
             onFinal = { text ->
-                b.input.setText("")
+                b.liveText.text = ""
                 Assistant.send(this, text, byVoice = true)
             },
             onState = { setListening(it) },
-            onError = { msg -> setListening(false); toast(msg) }
+            onError = { msg -> setListening(false); toast(msg) },
+            onLevel = { b.orb.level = it; b.bigOrb.level = it }
         )
 
         lifecycleScope.launch {
@@ -109,10 +116,13 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     Assistant.messages.collect { list ->
                         adapter.submitList(list) { if (list.isNotEmpty()) b.messages.scrollToPosition(list.size - 1) }
-                        b.emptyState.isVisible = list.isEmpty()
+                        val empty = list.isEmpty()
+                        b.emptyState.isVisible = empty
+                        b.micArea.isVisible = !empty // the big orb is the mic on the empty screen
+                        if (empty) b.greeting.text = greeting()
                     }
                 }
-                launch { Assistant.busy.collect { updateMic() } }
+                launch { combine(Assistant.busy, Assistant.speaking) { busy, speaking -> busy to speaking }.collect { updateOrb() } }
                 launch { ModelManager.state.collect { renderModel(it) } }
                 launch { Assistant.events.collect { handle(it) } }
             }
@@ -131,29 +141,46 @@ class MainActivity : AppCompatActivity() {
         handleIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        // The app uses the microphone itself while open; the wake-word service waits.
+        WakeWordService.pause()
+        WakeModel.refresh(this)
+        WakeWordService.start(this)
+    }
+
     override fun onResume() {
         super.onResume()
         ModelManager.refresh(this)
-        b.statusText.text = statusLine()
+        renderStatus()
     }
 
     override fun onStop() {
         super.onStop()
         if (listening) { listener.stop(); setListening(false) }
+        WakeWordService.resume()
     }
 
     private fun handleIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_LISTEN, false) == true) {
             intent.removeExtra(EXTRA_LISTEN)
-            b.root.post { startListening() }
+            b.root.postDelayed({ startListening() }, 300) // let the wake-word service free the mic
         }
     }
+
+    private fun onOrbTap() = when {
+        Assistant.busy.value || Assistant.speaking.value -> Assistant.stop()
+        listening -> { listener.stop(); setListening(false) }
+        else -> startListening()
+    }
+
+    private fun send(text: String) = Assistant.send(this, text, byVoice = false)
 
     private fun sendTyped() {
         val text = b.input.text?.toString().orEmpty()
         if (text.isBlank()) return
         b.input.setText("")
-        Assistant.send(this, text, byVoice = false)
+        send(text)
     }
 
     private fun startListening() {
@@ -172,15 +199,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun setListening(on: Boolean) {
         listening = on
-        updateMic()
-        b.statusText.text = if (on) "Listening…" else statusLine()
+        b.liveText.isVisible = on
+        if (on) b.liveText.text = "Listening…"
+        updateOrb()
     }
 
-    private fun updateMic() {
-        val busy = Assistant.busy.value
-        b.micButton.setImageResource(if (busy || listening) R.drawable.ic_stop else R.drawable.ic_mic)
-        b.micButton.contentDescription = if (busy) "Stop" else if (listening) "Stop listening" else "Speak"
-        b.sendButton.isEnabled = !busy
+    private fun updateOrb() {
+        val mode = when {
+            listening -> OrbView.Mode.LISTENING
+            Assistant.speaking.value -> OrbView.Mode.SPEAKING
+            Assistant.busy.value -> OrbView.Mode.THINKING
+            else -> OrbView.Mode.IDLE
+        }
+        b.orb.mode = mode
+        b.bigOrb.mode = mode
+        val stop = mode != OrbView.Mode.IDLE
+        b.micIcon.setImageResource(if (stop) R.drawable.ic_stop else R.drawable.ic_mic)
+        b.micArea.contentDescription = if (stop) "Stop" else "Speak"
+        b.sendButton.isEnabled = !Assistant.busy.value
     }
 
     private fun renderModel(state: ModelManager.State) {
@@ -190,13 +226,13 @@ class MainActivity : AppCompatActivity() {
         when (state) {
             is ModelManager.State.Missing -> {
                 val partial = ModelManager.partialBytes(this)
-                b.modelText.text = if (partial > 0) "Offline brain partly downloaded (${partial / 1_000_000} MB). Tap to continue."
-                else "Download the offline brain (about 1 GB, once) so I can answer questions without internet. Wi-Fi recommended."
+                b.modelText.text = if (partial > 0) "Offline brain is ${partial / 1_000_000} MB in. Continue to answer questions without internet."
+                else "Download the offline brain (about 1 GB, once) to answer questions without internet. Wi-Fi recommended."
                 b.downloadButton.text = if (partial > 0) "Continue" else "Download"
             }
             is ModelManager.State.Downloading -> {
                 window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                b.modelText.text = "Downloading offline brain… ${state.done / 1_000_000} / ${state.total / 1_000_000} MB"
+                b.modelText.text = "Downloading the offline brain: ${state.done / 1_000_000} of ${state.total / 1_000_000} MB"
                 b.modelProgress.setProgressCompat(state.percent, true)
                 b.downloadButton.text = "Pause"
             }
@@ -206,17 +242,29 @@ class MainActivity : AppCompatActivity() {
             }
             ModelManager.State.Ready -> {}
         }
-        b.statusText.text = statusLine()
+        renderStatus()
     }
 
-    private fun statusLine(): String {
+    private fun renderStatus() {
         val s = Settings(this)
         val online = s.onlineMode && s.geminiKey.isNotBlank() && Assistant.isOnline(this)
         val local = ModelManager.state.value is ModelManager.State.Ready
-        return when {
-            online -> "Online · Gemini" + if (local) " (offline brain as backup)" else ""
-            local -> "Offline brain"
-            else -> "Phone commands only"
+        val (text, color) = when {
+            online -> "Online" to R.color.violet
+            local -> "Offline" to R.color.teal
+            else -> "Commands only" to R.color.idle_dot
+        }
+        b.statusText.text = text
+        b.statusDot.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, color))
+    }
+
+    private fun greeting(): String {
+        val h = LocalTime.now().hour
+        return when (h) {
+            in 5..11 -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            in 17..21 -> "Good evening"
+            else -> "Still up?"
         }
     }
 

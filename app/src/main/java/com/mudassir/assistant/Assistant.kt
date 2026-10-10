@@ -72,10 +72,37 @@ object Assistant {
     private var lastCommand: CommandParser.Type? = null
     private var job: Job? = null
     private var speaker: Speaker? = null
+    private val notSpeaking = MutableStateFlow(false)
+
+    /** True while a reply is being read aloud. */
+    val speaking: StateFlow<Boolean> get() = speaker?.speaking ?: notSpeaking
+
+    /** The conversation being shown; saved to ChatStore after every reply. */
+    var conversationId: String = newId()
+        private set
 
     fun init(ctx: Context) {
         if (speaker == null) speaker = Speaker(ctx)
+        ChatStore.init(ctx)
+        // Continue the most recent chat if it's from the last 6 hours.
+        ChatStore.list().firstOrNull()?.takeIf { System.currentTimeMillis() - it.updated < 6 * 3600_000L }?.let { open(it.id) }
     }
+
+    /** Show a saved conversation (from History). */
+    fun open(id: String) {
+        stop()
+        pendingPrefix = null
+        lastCommand = null
+        conversationId = id
+        val msgs = ChatStore.load(id)
+        _messages.value = msgs
+        ids.set((msgs.maxOfOrNull { it.id } ?: 0L) + 1)
+        LocalBrain.reset()
+    }
+
+    private fun newId() = System.currentTimeMillis().toString()
+
+    private fun persist() = ChatStore.save(conversationId, _messages.value)
 
     /** Handle something you typed or said. */
     fun send(ctx: Context, input: String, byVoice: Boolean) {
@@ -105,10 +132,13 @@ object Assistant {
         speaker?.stop()
     }
 
-    fun newChat() {
+    /** Start a fresh conversation. [save] = keep the current one in history (false after deleting it). */
+    fun newChat(save: Boolean = true) {
         stop()
         pendingPrefix = null
         lastCommand = null
+        if (save) persist()
+        conversationId = newId()
         _messages.value = emptyList()
         LocalBrain.reset()
     }
@@ -159,6 +189,7 @@ object Assistant {
             add(ChatMessage(ids.getAndIncrement(), fromUser = false, text = "Something went wrong: ${e.message}", source = "phone"))
         } finally {
             _busy.value = false
+            persist()
         }
     }
 

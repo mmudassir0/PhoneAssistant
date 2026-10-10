@@ -82,5 +82,9 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("com.google.android.material:material:1.12.0")
 
+    // Offline "Hey Assistant" wake word
+    implementation("com.alphacephei:vosk-android:0.3.75@aar")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
+
     testImplementation("junit:junit:4.13.2")
 }

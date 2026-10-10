@@ -18,7 +18,9 @@ class Listener(
     private val onPartial: (String) -> Unit,
     private val onFinal: (String) -> Unit,
     private val onState: (listening: Boolean) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    /** Microphone loudness, roughly 0..1, for the orb animation. */
+    private val onLevel: (Float) -> Unit = {}
 ) {
     private var recognizer: SpeechRecognizer? = null
     private var onDevice = true
@@ -38,7 +40,7 @@ class Listener(
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = onState(true)
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) = onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() = onState(false)
             override fun onEvent(eventType: Int, params: Bundle?) {}
