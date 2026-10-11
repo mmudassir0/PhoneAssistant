@@ -20,7 +20,9 @@ class Listener(
     private val onState: (listening: Boolean) -> Unit,
     private val onError: (String) -> Unit,
     /** Microphone loudness, roughly 0..1, for the orb animation. */
-    private val onLevel: (Float) -> Unit = {}
+    private val onLevel: (Float) -> Unit = {},
+    /** Nothing was said. If not set, [onError] is told instead. */
+    private val onSilence: (() -> Unit)? = null
 ) {
     private var recognizer: SpeechRecognizer? = null
     private var onDevice = true
@@ -35,7 +37,7 @@ class Listener(
             SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
         usingOnDevice = useOnDevice
         val r = if (useOnDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
-        else SpeechRecognizer.createSpeechRecognizer(ctx)
+        else recognizerComponent()?.let { SpeechRecognizer.createSpeechRecognizer(ctx, it) } ?: SpeechRecognizer.createSpeechRecognizer(ctx)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = onState(true)
@@ -67,6 +69,10 @@ class Listener(
                     android.os.Handler(android.os.Looper.getMainLooper()).post { start(language) }
                     return
                 }
+                if (nothingHeard && onSilence != null) {
+                    onSilence.invoke()
+                    return
+                }
                 onError(
                     when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I didn't catch that. Tap the mic and try again."
@@ -91,6 +97,19 @@ class Listener(
                 .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         )
+    }
+
+    /**
+     * A real speech recognizer (Google's if present). Needed because choosing this app as the
+     * default assistant can make our placeholder recognizer the phone's default.
+     */
+    private fun recognizerComponent(): android.content.ComponentName? {
+        val services = ctx.packageManager.queryIntentServices(android.content.Intent(android.speech.RecognitionService.SERVICE_INTERFACE), 0)
+            .map { android.content.ComponentName(it.serviceInfo.packageName, it.serviceInfo.name) }
+            .filter { it.packageName != ctx.packageName }
+        return services.firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" }
+            ?: services.firstOrNull { it.packageName.startsWith("com.google") }
+            ?: services.firstOrNull()
     }
 
     fun stop() {

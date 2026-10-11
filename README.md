@@ -22,6 +22,16 @@ llama.cpp) for questions, plus instant phone commands. Optional free online mode
   Hanafi Asr, checked against the Adhan library to within 1 minute).
 - **More:** music control ("next song"), directions, "where am I", share your location on WhatsApp,
   camera and selfies, translations, contact numbers, and "good morning" for a daily briefing.
+- **Roman Urdu:** "6 baje alarm laga do", "Ammi ko call karo", "torch band karo", "is mahine kitna kharcha hua".
+- **Money and stocks:** "Spent 500 on petrol", "How much did I spend this month?", live PSX prices
+  ("OGDC price", "How is KSE-100 today?") from dps.psx.com.pk, and your portfolio with profit/loss.
+- **Conversation mode:** after a spoken answer it keeps listening; stay quiet to end.
+- **Smart understanding (online):** free phrasing like "it's too dark in here" becomes a command; the AI can
+  only choose commands the parser knows, and can't place calls directly (it opens the dialer).
+- **Camera (online):** "What is this?", "Read this", "Translate this menu".
+- **Routines:** "good night", "driving mode", or your own (Settings → Routines).
+- **Phone integration:** default digital assistant (hold power/home), home-screen widget with next prayer,
+  prayer-time alerts, and "remind me when I reach office" (save places with "save this place as office").
 - **Chats are saved**; open old ones from the history button. Lists and memories are on the list button.
 
 ## First run

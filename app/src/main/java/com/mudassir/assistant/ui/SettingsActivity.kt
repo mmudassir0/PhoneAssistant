@@ -14,6 +14,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceManager
+import android.widget.Toast
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.mudassir.assistant.R
 import com.mudassir.assistant.Updater
@@ -111,6 +113,25 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 true
             }
+            findPreference<Preference>("routines")?.setOnPreferenceClickListener {
+                startActivity(Intent(ctx, RoutinesActivity::class.java))
+                true
+            }
+            findPreference<Preference>("default_assistant")?.setOnPreferenceClickListener {
+                runCatching { startActivity(Intent(AndroidSettings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)) }
+                    .onFailure { startActivity(Intent(AndroidSettings.ACTION_VOICE_INPUT_SETTINGS)) }
+                Toast.makeText(ctx, "Open “Digital assistant app” and choose Phone Assistant", Toast.LENGTH_LONG).show()
+                true
+            }
+            findPreference<SwitchPreferenceCompat>("prayer_alerts")?.setOnPreferenceChangeListener { _, value ->
+                PreferenceManager.getDefaultSharedPreferences(ctx).edit().putBoolean(com.mudassir.assistant.Settings.K_PRAYER_ALERTS, value as Boolean).commit()
+                com.mudassir.assistant.actions.PrayerAlerts.schedule(ctx)
+                if (value) {
+                    val (name, at) = com.mudassir.assistant.actions.PrayerAlerts.next(ctx)
+                    Toast.makeText(ctx, "Next alert: $name at ${at.toLocalTime().format(java.time.format.DateTimeFormatter.ofPattern("h:mm a", java.util.Locale.US))}", Toast.LENGTH_LONG).show()
+                }
+                true
+            }
             findPreference<Preference>("overlay")?.setOnPreferenceClickListener {
                 startActivity(overlayIntent())
                 true
@@ -148,6 +169,10 @@ class SettingsActivity : AppCompatActivity() {
             super.onResume()
             val ctx = requireContext()
             WakeModel.refresh(ctx)
+            val assistant = AndroidSettings.Secure.getString(ctx.contentResolver, "assistant").orEmpty()
+            findPreference<Preference>("default_assistant")?.summary =
+                if (assistant.startsWith(ctx.packageName)) "Done: hold the power or home button to talk"
+                else "Hold the power or home button to open this assistant instead of Google's. Tap, then pick Phone Assistant under “Digital assistant app”."
             findPreference<Preference>("overlay")?.summary =
                 if (AndroidSettings.canDrawOverlays(ctx)) "Allowed: \"Hey Assistant\" opens the app directly"
                 else "Not allowed: tap to allow \"Display over other apps\" so the wake word can open the app"

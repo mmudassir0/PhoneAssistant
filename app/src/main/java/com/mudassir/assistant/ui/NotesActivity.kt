@@ -16,7 +16,10 @@ import com.mudassir.assistant.actions.Notes
 import com.mudassir.assistant.databinding.ActivityNotesBinding
 import com.mudassir.assistant.databinding.ItemChatBinding
 import com.mudassir.assistant.databinding.ItemHeaderBinding
-import kotlinx.coroutines.flow.combine
+import com.mudassir.assistant.actions.Geofences
+import com.mudassir.assistant.actions.Tracker
+import com.mudassir.assistant.commands.Calculator
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -46,8 +49,8 @@ class NotesActivity : AppCompatActivity() {
         b.list.adapter = adapter
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                combine(Notes.lists, Notes.memories, Notes.name) { lists, memories, name -> Triple(lists, memories, name) }
-                    .collect { (lists, memories, name) -> render(lists, memories, name) }
+                merge(Notes.lists, Notes.memories, Notes.name, Tracker.expenses, Tracker.holdings, Tracker.places, Tracker.placeReminders)
+                    .collect { render(Notes.lists.value, Notes.memories.value, Notes.name.value) }
             }
         }
     }
@@ -64,6 +67,38 @@ class NotesActivity : AppCompatActivity() {
             if (name != null) out += Row.Item("Your name is $name", null) { Notes.clearName() }
             memories.forEachIndexed { i, m ->
                 out += Row.Item(m.text, DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(m.added))) { Notes.forgetAt(i) }
+            }
+        }
+        val spent = Tracker.expensesIn("this month")
+        if (spent.isNotEmpty()) {
+            out += Row.Header("Spent this month: Rs ${Calculator.format(spent.sumOf { it.amount })}")
+            spent.sortedByDescending { it.time }.take(30).forEach { e ->
+                out += Row.Item(
+                    "Rs ${Calculator.format(e.amount)}: ${e.category.replaceFirstChar { it.uppercase() }}",
+                    DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(e.time))
+                ) { Tracker.removeExpense(e) }
+            }
+        }
+        val holdings = Tracker.holdings.value
+        if (holdings.isNotEmpty()) {
+            out += Row.Header("Stocks")
+            holdings.sortedBy { it.symbol }.forEach { h ->
+                out += Row.Item("${h.symbol}: ${Calculator.format(h.shares)} shares", "Average Rs ${Calculator.format(h.avgPrice)}") { Tracker.removeHolding(h) }
+            }
+        }
+        val places = Tracker.places.value
+        if (places.isNotEmpty()) {
+            out += Row.Header("Places")
+            places.forEach { p -> out += Row.Item(p.name.replaceFirstChar { it.uppercase() }, "Saved location") { Tracker.removePlace(p) } }
+        }
+        val placeReminders = Tracker.placeReminders.value
+        if (placeReminders.isNotEmpty()) {
+            out += Row.Header("When I arrive")
+            placeReminders.forEach { r ->
+                out += Row.Item(r.text.replaceFirstChar { it.uppercase() }, "At ${r.place}") {
+                    Tracker.removePlaceReminder(r.id)
+                    Geofences.remove(this, r.id)
+                }
             }
         }
         rows = out

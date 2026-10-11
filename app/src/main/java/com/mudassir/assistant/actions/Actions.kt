@@ -16,6 +16,8 @@ import android.provider.CalendarContract
 import android.provider.MediaStore
 import android.view.KeyEvent
 import com.mudassir.assistant.commands.Calculator
+import com.mudassir.assistant.commands.PsxSymbols
+import com.mudassir.assistant.psx.Psx
 import com.mudassir.assistant.commands.PrayerTimes
 import com.mudassir.assistant.commands.UnitConverter
 import java.time.LocalDate
@@ -55,13 +57,19 @@ object Actions {
         /** Clear the conversation. */
         val newChat: Boolean = false,
         /** Don't read the reply aloud (e.g. "play music": speaking would talk over it). */
-        val quiet: Boolean = false
+        val quiet: Boolean = false,
+        /** Take a photo and ask Gemini about it: "describe", "read" or "translate:<language>". */
+        val vision: String? = null
     )
 
     private val TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
     private val DAY = DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.US)
 
-    suspend fun run(ctx: Context, c: Command, online: Boolean): Result = when (c.type) {
+    /**
+     * @param routed true when the AI picked this command from free speech: anything that would act
+     * without a tap (a phone call) only prepares it instead, so a misunderstanding can't call anyone.
+     */
+    suspend fun run(ctx: Context, c: Command, online: Boolean, routed: Boolean = false): Result = when (c.type) {
         Type.ALARM -> {
             val t = c.time
             if (t == null) Result("What time should I set the alarm for?", answerPrefix = "set an alarm for ")
@@ -95,7 +103,7 @@ object Actions {
             }
         }
 
-        Type.CALL -> call(ctx, c.text.orEmpty())
+        Type.CALL -> call(ctx, c.text.orEmpty(), routed)
         Type.OPEN_APP -> openApp(ctx, c.text.orEmpty())
 
         Type.TIME -> Result("It's ${LocalDateTime.now().format(TIME)}.")
@@ -206,9 +214,11 @@ object Actions {
         Type.MEDIA -> media(ctx, c.text ?: "play")
         Type.NAVIGATE -> {
             val dest = c.text.orEmpty()
+            val saved = Tracker.place(dest)
+            val target = if (saved != null) "${saved.lat},${saved.lng}" else dest
             Result(
                 "Starting directions to $dest.",
-                Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=" + Uri.encode(dest)))
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=" + Uri.encode(target)))
             )
         }
         Type.WHERE_AM_I -> whereAmI(ctx)
@@ -231,11 +241,38 @@ object Actions {
             }
         }
 
+        Type.EXPENSE_ADD -> {
+            Tracker.addExpense(c.value, c.text!!)
+            val month = Tracker.expensesIn("this month").sumOf { it.amount }
+            Result("Logged ${rs(c.value)} for ${c.text}. This month so far: ${rs(month)}.")
+        }
+        Type.EXPENSE_REPORT -> expenseReport(c.text ?: "this month", c.message)
+        Type.STOCK_QUOTE -> stockQuote(c, online)
+        Type.STOCK_INDEX -> stockIndex(c.text ?: "KSE100", online)
+        Type.PORTFOLIO_ADD -> portfolioAdd(c, online)
+        Type.PORTFOLIO_SELL -> {
+            val left = Tracker.sell(c.text!!, c.value)
+            Result(
+                when {
+                    left == null -> "You don't have ${c.text} in your portfolio."
+                    left == 0.0 -> "Removed ${c.text} from your portfolio."
+                    else -> "Done. You now hold ${Calculator.format(left)} ${c.text}."
+                }
+            )
+        }
+        Type.PORTFOLIO -> portfolio(online)
+        Type.VISION -> Result("", vision = c.text)
+        Type.SAVE_PLACE -> savePlace(ctx, c.text!!)
+        Type.REMIND_AT_PLACE -> remindAtPlace(ctx, c.text!!, c.message!!)
+
         Type.HELP -> Result(
             "Here's what I can do.\n" +
                 "• Phone: alarms, timers, reminders, calls, WhatsApp and SMS, apps and websites, camera, music, volume, brightness, silent mode, flashlight.\n" +
                 "• Organize: your calendar, shopping and other lists, notes, and things to remember (\"remember I parked on level 2\").\n" +
-                "• Info: maths and conversions, prayer times, weather, news, directions, where you are, contact numbers, translations.\n" +
+                "• Info: maths and conversions, prayer times, weather, news, PSX prices and your portfolio, directions, where you are, contact numbers, translations.\n" +
+                "• Money: \"spent 500 on petrol\", \"how much did I spend this month?\"\n" +
+                "• Camera: \"what is this?\", \"read this\" (online mode).\n" +
+                "• Urdu works too: \"6 baje alarm laga do\", \"Ammi ko call karo\". Routines like \"good night\" run several steps.\n" +
                 "• Say \"good morning\" for your daily briefing, or just ask me anything."
         )
 
@@ -249,7 +286,7 @@ object Actions {
 
     // ---- calls ----
 
-    private fun call(ctx: Context, who: String): Result {
+    private fun call(ctx: Context, who: String, routed: Boolean = false): Result {
         val digits = who.replace(Regex("[\\s-]"), "")
         val number: String
         val name: String
@@ -265,6 +302,7 @@ object Actions {
             number = match.second
         }
         val uri = Uri.parse("tel:" + Uri.encode(number))
+        if (routed) return Result("Here's $name's number. Tap call.", Intent(Intent.ACTION_DIAL, uri))
         return if (granted(ctx, Manifest.permission.CALL_PHONE)) Result("Calling $name.", Intent(Intent.ACTION_CALL, uri))
         // Without the call permission, the dialer opens with the number ready.
         else Result("Calling $name.", Intent(Intent.ACTION_DIAL, uri), permissions = listOf(Manifest.permission.CALL_PHONE))
@@ -477,6 +515,7 @@ object Actions {
         val lat = loc?.latitude ?: 31.5204
         val lng = loc?.longitude ?: 74.3587
         val offset = ZoneId.systemDefault().rules.getOffset(date.atStartOfDay(ZoneId.systemDefault()).toInstant()).totalSeconds / 3600.0
+        if (loc != null) Settings(ctx).run { lastLat = loc.latitude; lastLng = loc.longitude }
         val note = if (loc == null) "for Lahore (allow location for your city)" else null
         return PrayerTimes.pakistan(lat, lng, offset).on(date) to note
     }
@@ -533,6 +572,154 @@ object Actions {
             parts += "In the news: " + it.joinToString("; ") + "."
         }
         return Result(parts.joinToString("\n\n"))
+    }
+
+    // ---- money ----
+
+    private fun rs(v: Double) = "Rs " + Calculator.format(v)
+
+    private fun expenseReport(range: String, category: String?): Result {
+        val list = Tracker.expensesIn(range, category)
+        val label = if (range == "all") "in total" else range
+        if (list.isEmpty()) {
+            return Result(
+                if (category != null) "No spending on $category $label."
+                else "No expenses logged $label. Say \"spent 500 on petrol\" to add one."
+            )
+        }
+        val total = list.sumOf { it.amount }
+        if (category != null) {
+            return Result("You spent ${rs(total)} on $category $label (${list.size} time${if (list.size == 1) "" else "s"}).")
+        }
+        val lines = list.groupBy { it.category }.mapValues { (_, v) -> v.sumOf { it.amount } }.entries
+            .sortedByDescending { it.value }.take(6)
+            .joinToString("\n") { "• ${it.key.replaceFirstChar { c -> c.uppercase() }}: ${rs(it.value)}" }
+        return Result("You spent ${rs(total)} $label:\n$lines")
+    }
+
+    // ---- stocks ----
+
+    private fun move(change: Double?, pct: Double?): String = when {
+        change == null -> "no change data"
+        change > 0 -> "up ${Calculator.format(change)}" + (pct?.let { " (${Calculator.format(kotlin.math.abs(it))}%)" } ?: "")
+        change < 0 -> "down ${Calculator.format(-change)}" + (pct?.let { " (${Calculator.format(kotlin.math.abs(it))}%)" } ?: "")
+        else -> "unchanged"
+    }
+
+    private suspend fun stockQuote(c: Command, online: Boolean): Result {
+        val sym = c.text!!
+        if (!online) return Result("I need internet for live PSX prices.")
+        val q = try {
+            Psx.quote(sym)
+        } catch (e: Exception) {
+            return Result("I couldn't reach PSX right now.")
+        }
+        if (q == null) {
+            // "Gold price" isn't a PSX stock: answer it as a normal question instead.
+            return if (!PsxSymbols.isKnown(sym)) Result("", aiPrompt = c.message) else Result("I couldn't find $sym on PSX.")
+        }
+        val name = q.name?.let { "$it ($sym)" } ?: sym
+        return Result("$name is at ${rs(q.close!!)}, ${move(q.change, q.changePct)} today." + (q.asOf?.let { "\n$it" } ?: ""))
+    }
+
+    private suspend fun stockIndex(code: String, online: Boolean): Result {
+        if (!online) return Result("I need internet for live PSX data.")
+        val all = try {
+            Psx.indices()
+        } catch (e: Exception) {
+            return Result("I couldn't reach PSX right now.")
+        }
+        val codes = if (code == "KSE100") listOf("KSE100", "KMI30") else listOf(code)
+        val lines = codes.mapNotNull { k ->
+            val i = all[k] ?: return@mapNotNull null
+            val ch = i.change
+            val pct = i.changePct?.let { " (${Calculator.format(kotlin.math.abs(it))}%)" } ?: ""
+            val moved = when {
+                ch == null -> "no change data"
+                ch > 0 -> "up ${Calculator.format(ch)} points$pct"
+                ch < 0 -> "down ${Calculator.format(-ch)} points$pct"
+                else -> "unchanged"
+            }
+            "${Psx.INDEX_NAMES[k] ?: k} is at ${Calculator.format(i.current ?: 0.0)}, $moved today."
+        }
+        return Result(if (lines.isEmpty()) "I couldn't find that index on PSX." else lines.joinToString("\n"))
+    }
+
+    private suspend fun portfolioAdd(c: Command, online: Boolean): Result {
+        val sym = c.text!!
+        val shares = c.value
+        val price = c.message?.toDoubleOrNull()
+            ?: (if (online) runCatching { Psx.quote(sym)?.close }.getOrNull() else null)
+            ?: return Result(
+                "At what price did you buy $sym?",
+                answerPrefix = "i bought ${Calculator.format(shares).replace(",", "")} shares of ${sym.lowercase()} at "
+            )
+        if (c.message == null && online) {
+            // No price given: use today's price, and say so.
+            Tracker.buy(sym, shares, price)
+            return Result("Added ${Calculator.format(shares)} $sym at today's price, ${rs(price)}. Say \"I bought … at …\" next time to use your own price.")
+        }
+        Tracker.buy(sym, shares, price)
+        val h = Tracker.holdings.value.first { it.symbol == sym }
+        return Result("Added ${Calculator.format(shares)} $sym at ${rs(price)}. You now hold ${Calculator.format(h.shares)}, average ${rs(h.avgPrice)}.")
+    }
+
+    private suspend fun portfolio(online: Boolean): Result {
+        val holdings = Tracker.holdings.value
+        if (holdings.isEmpty()) return Result("Your portfolio is empty. Say \"I bought 100 shares of OGDC at 120\" to add a stock.")
+        if (!online) {
+            return Result("You hold:\n" + holdings.joinToString("\n") { "• ${it.symbol}: ${Calculator.format(it.shares)} at ${rs(it.avgPrice)}" } +
+                "\nConnect to the internet for live prices.")
+        }
+        var value = 0.0
+        var cost = 0.0
+        var today = 0.0
+        val lines = holdings.take(15).map { h ->
+            val q = runCatching { Psx.quote(h.symbol) }.getOrNull()
+            val price = q?.close
+            cost += h.shares * h.avgPrice
+            if (price == null) return@map "• ${h.symbol}: price unavailable"
+            value += h.shares * price
+            today += h.shares * (q.change ?: 0.0)
+            val pl = h.shares * (price - h.avgPrice)
+            val sign = if (pl >= 0) "+" else "-"
+            "• ${h.symbol}: ${Calculator.format(h.shares)} × ${rs(price)} = ${rs(h.shares * price)} ($sign${rs(kotlin.math.abs(pl))})"
+        }
+        val pl = value - cost
+        val pct = if (cost > 0) pl / cost * 100 else 0.0
+        val summary = "Your portfolio is worth ${rs(value)}, " +
+            (if (pl >= 0) "up ${rs(pl)}" else "down ${rs(-pl)}") + " (${Calculator.format(kotlin.math.abs(pct))}%) overall" +
+            (if (today != 0.0) ", " + (if (today > 0) "up ${rs(today)}" else "down ${rs(-today)}") + " today." else ".")
+        return Result(summary + "\n" + lines.joinToString("\n"))
+    }
+
+    // ---- places ----
+
+    private suspend fun savePlace(ctx: Context, name: String): Result {
+        if (!Locator.allowed(ctx)) {
+            return Result("I need location access to save this place.", permissions = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+        }
+        val loc = Locator.current(ctx) ?: return Result("I couldn't get your location. Check that location is turned on.")
+        Tracker.savePlace(name, loc.latitude, loc.longitude)
+        return Result("Saved this spot as $name. Now you can say \"take me to $name\" or \"remind me when I reach $name to …\".")
+    }
+
+    private fun remindAtPlace(ctx: Context, name: String, task: String): Result {
+        val place = Tracker.place(name)
+            ?: return Result("I don't know where your $name is yet. When you're there, say \"save this place as $name\", then ask again.")
+        if (!granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION)) {
+            return Result("I need precise location to know when you arrive.", permissions = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+            return Result(
+                "To remind you when you arrive, even with the app closed, choose \"Allow all the time\" for location on the next screen.",
+                permissions = listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            )
+        }
+        val r = Tracker.PlaceReminder(System.currentTimeMillis().toString(), place.name, task)
+        Tracker.addPlaceReminder(r)
+        Geofences.add(ctx, r, place)
+        return Result("Okay, I'll remind you to $task when you reach ${place.name}.")
     }
 
     // ---- messages ----

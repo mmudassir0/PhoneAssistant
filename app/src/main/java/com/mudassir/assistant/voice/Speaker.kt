@@ -64,6 +64,7 @@ class Speaker(ctx: Context) {
         val clean = text.replace(Regex("[*_#`>]"), "").replace(Regex("\\s+"), " ").trim()
         if (!ready || clean.isEmpty()) return
         queued.incrementAndGet()
+        _speaking.value = true // at once, so nothing starts listening before the voice starts
         tts.speak(clean, TextToSpeech.QUEUE_ADD, null, "u${utterance++}")
     }
 

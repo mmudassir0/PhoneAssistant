@@ -82,6 +82,11 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("com.google.android.material:material:1.12.0")
 
+    // "Remind me when I reach office" (geofences)
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Upright photos for "what is this?"
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+
     // Offline "Hey Assistant" wake word
     implementation("com.alphacephei:vosk-android:0.3.75@aar")
     implementation("net.java.dev.jna:jna:5.18.1@aar")

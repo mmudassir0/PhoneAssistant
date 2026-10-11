@@ -40,6 +40,33 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Conversation">
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:iconSpaceReserved="false"
+            app:key="conversation_mode"
+            app:summary="After answering a spoken question, keep listening so you can carry on talking. Stay quiet to end."
+            app:title="Conversation mode" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="routines"
+            app:summary="One phrase, several actions: “good night”, “driving mode”…"
+            app:title="Routines" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="default_assistant"
+            app:title="Make this the phone's assistant" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:iconSpaceReserved="false" app:title="Prayer">
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:iconSpaceReserved="false"
+            app:key="prayer_alerts"
+            app:summary="A notification at each prayer time for your location (Karachi method, Hanafi Asr)"
+            app:title="Prayer time alerts" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:iconSpaceReserved="false" app:title="Hey Assistant">
         <SwitchPreferenceCompat
             app:defaultValue="false"

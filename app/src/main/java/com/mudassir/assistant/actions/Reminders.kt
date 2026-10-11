@@ -90,7 +90,10 @@ object Reminders {
     /** Re-schedules reminders after the phone restarts. */
     class BootReceiver : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_BOOT_COMPLETED) rescheduleAll(ctx)
+            if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+            rescheduleAll(ctx)
+            PrayerAlerts.schedule(ctx)
+            runCatching { Geofences.restoreAll(ctx) }
         }
     }
 }
