@@ -2,4 +2,6 @@
 <paths>
     <!-- Downloaded update APKs -->
     <cache-path name="updates" path="updates/" />
+    <!-- Photos for "what is this?" -->
+    <cache-path name="photos" path="photos/" />
 </paths>

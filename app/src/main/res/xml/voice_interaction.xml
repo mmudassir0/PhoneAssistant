@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lets you pick Phone Assistant as the phone's default digital assistant. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="com.mudassir.assistant.voice.AssistantRecognitionService"
+    android:sessionService="com.mudassir.assistant.voice.AssistantSessionService"
+    android:settingsActivity="com.mudassir.assistant.ui.SettingsActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false" />

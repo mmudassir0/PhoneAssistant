@@ -41,6 +41,26 @@ class MainActivity : AppCompatActivity() {
     private val adapter = ChatAdapter()
     private var listening = false
 
+    /** The last thing was said by voice: after the reply, listen again (conversation mode). */
+    private var voiceTurn = false
+
+    /** What the photo being taken is for ("describe", "read", "translate:urdu"). */
+    private var photoMode: String? = null
+    private val photoFile by lazy { java.io.File(java.io.File(cacheDir, "photos").apply { mkdirs() }, "photo.jpg") }
+
+    private val takePicture = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val mode = photoMode ?: return@registerForActivityResult
+        photoMode = null
+        if (!ok) {
+            toast("No photo taken.")
+            return@registerForActivityResult
+        }
+        lifecycleScope.launch {
+            val jpeg = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Photos.prepare(photoFile) }
+            if (jpeg == null) toast("Couldn't read the photo.") else Assistant.askAboutPhoto(this@MainActivity, jpeg, mode)
+        }
+    }
+
     /** The command waiting for a permission answer. */
     private var waitingCommand: UiEvent.AskPermissions? = null
 
@@ -105,11 +125,19 @@ class MainActivity : AppCompatActivity() {
             onPartial = { b.liveText.text = it },
             onFinal = { text ->
                 b.liveText.text = ""
+                voiceTurn = true
                 Assistant.send(this, text, byVoice = true)
             },
             onState = { setListening(it) },
-            onError = { msg -> setListening(false); toast(msg) },
-            onLevel = { b.orb.level = it; b.bigOrb.level = it }
+            onError = { msg -> voiceTurn = false; setListening(false); toast(msg) },
+            onLevel = { b.orb.level = it; b.bigOrb.level = it },
+            onSilence = {
+                // Nothing said: end the conversation quietly (only nag if you tapped the mic yourself).
+                val wasConversation = voiceTurn
+                voiceTurn = false
+                setListening(false)
+                if (!wasConversation) toast("I didn't catch that. Tap the orb and try again.")
+            }
         )
 
         lifecycleScope.launch {
@@ -123,7 +151,12 @@ class MainActivity : AppCompatActivity() {
                         if (empty) b.greeting.text = greeting()
                     }
                 }
-                launch { combine(Assistant.busy, Assistant.speaking) { busy, speaking -> busy to speaking }.collect { updateOrb() } }
+                launch {
+                    combine(Assistant.busy, Assistant.speaking) { busy, speaking -> busy to speaking }.collect { (busy, speaking) ->
+                        updateOrb()
+                        if (!busy && !speaking) maybeKeepListening()
+                    }
+                }
                 launch { ModelManager.state.collect { renderModel(it) } }
                 launch { Assistant.events.collect { handle(it) } }
             }
@@ -156,8 +189,22 @@ class MainActivity : AppCompatActivity() {
         renderStatus()
     }
 
+    /** Conversation mode: after a spoken reply, listen again. Also when I asked you a question. */
+    private fun maybeKeepListening() {
+        if (!voiceTurn || listening) return
+        if (!Settings(this).conversationMode && !Assistant.awaitingAnswer) {
+            voiceTurn = false
+            return
+        }
+        b.root.postDelayed({
+            val stillIdle = !Assistant.busy.value && !Assistant.speaking.value && !listening
+            if (voiceTurn && stillIdle && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) startListening()
+        }, 450)
+    }
+
     override fun onStop() {
         super.onStop()
+        voiceTurn = false // another app opened: stop the conversation
         if (listening) { listener.stop(); setListening(false) }
         WakeWordService.resume()
     }
@@ -170,8 +217,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onOrbTap() = when {
-        Assistant.busy.value || Assistant.speaking.value -> Assistant.stop()
-        listening -> { listener.stop(); setListening(false) }
+        Assistant.busy.value || Assistant.speaking.value -> { voiceTurn = false; Assistant.stop() }
+        listening -> { voiceTurn = false; listener.stop(); setListening(false) }
         else -> startListening()
     }
 
@@ -279,6 +326,17 @@ class MainActivity : AppCompatActivity() {
                 toast("No app on this phone can do that.")
             } catch (ex: SecurityException) {
                 toast("Android blocked that action.")
+            }
+            is UiEvent.TakePhoto -> {
+                photoMode = e.mode
+                voiceTurn = false
+                val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", photoFile)
+                try {
+                    takePicture.launch(uri)
+                } catch (ex: ActivityNotFoundException) {
+                    photoMode = null
+                    toast("No camera app found.")
+                }
             }
             is UiEvent.AskPermissions -> {
                 waitingCommand = e

@@ -23,16 +23,21 @@ object GeminiBrain {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    suspend fun reply(apiKey: String, model: String, turns: List<Turn>, onText: (String) -> Unit): String =
+    /** [image] (JPEG) is attached to the last user message, for "what is this?" photos. */
+    suspend fun reply(apiKey: String, model: String, turns: List<Turn>, onText: (String) -> Unit, image: ByteArray? = null): String =
         withContext(Dispatchers.IO) {
             val system = turns.firstOrNull { it.role == Turn.SYSTEM }?.text
             val contents = JSONArray()
-            turns.filter { it.role != Turn.SYSTEM }.forEach { t ->
-                contents.put(
-                    JSONObject()
-                        .put("role", if (t.role == Turn.ASSISTANT) "model" else "user")
-                        .put("parts", JSONArray().put(JSONObject().put("text", t.text)))
-                )
+            val chat = turns.filter { it.role != Turn.SYSTEM }
+            chat.forEachIndexed { i, t ->
+                val parts = JSONArray()
+                if (image != null && i == chat.lastIndex) {
+                    parts.put(JSONObject().put("inline_data", JSONObject()
+                        .put("mime_type", "image/jpeg")
+                        .put("data", android.util.Base64.encodeToString(image, android.util.Base64.NO_WRAP))))
+                }
+                parts.put(JSONObject().put("text", t.text))
+                contents.put(JSONObject().put("role", if (t.role == Turn.ASSISTANT) "model" else "user").put("parts", parts))
             }
             val body = JSONObject().put("contents", contents)
             if (system != null) body.put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))

@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Phone Assistant</string>
     <string name="tile_label">Assistant</string>
+    <string name="widget_description">Tap to talk, and see the next prayer time</string>
 </resources>

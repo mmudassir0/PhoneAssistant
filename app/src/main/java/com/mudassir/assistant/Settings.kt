@@ -22,6 +22,21 @@ class Settings(ctx: Context) {
     val weatherCity get() = p.getString(K_CITY, "Lahore")?.trim()?.ifEmpty { null } ?: "Lahore"
     val autoUpdateCheck get() = p.getBoolean(K_UPDATE_CHECK, true)
 
+    /** After a spoken reply, listen again so you can keep talking. */
+    val conversationMode get() = p.getBoolean(K_CONVERSATION, true)
+
+    /** Notify at each prayer time. */
+    val prayerAlerts get() = p.getBoolean(K_PRAYER_ALERTS, false)
+
+    /** Last known location, for prayer times when a fresh fix isn't available (Lahore until known). */
+    var lastLat: Double
+        get() = p.getFloat("last_lat", 31.5204f).toDouble()
+        set(v) = p.edit().putFloat("last_lat", v.toFloat()).apply()
+    var lastLng: Double
+        get() = p.getFloat("last_lng", 74.3587f).toDouble()
+        set(v) = p.edit().putFloat("last_lng", v.toFloat()).apply()
+    val hasLocation get() = p.contains("last_lat")
+
     /** Listen for "Hey Assistant" in the background. */
     var wakeWord: Boolean
         get() = p.getBoolean(K_WAKE, false)
@@ -46,6 +61,8 @@ class Settings(ctx: Context) {
         const val K_CITY = "weather_city"
         const val K_UPDATE_CHECK = "update_check"
         const val K_WAKE = "wake_word"
+        const val K_CONVERSATION = "conversation_mode"
+        const val K_PRAYER_ALERTS = "prayer_alerts"
 
         /** Google's alias for its newest Flash model. Editable in Settings in case it changes. */
         const val DEFAULT_GEMINI_MODEL = "gemini-flash-latest"

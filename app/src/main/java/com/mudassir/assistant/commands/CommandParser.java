@@ -29,6 +29,8 @@ public final class CommandParser {
         CALC, CONVERT, CALENDAR, CALENDAR_ADD, NOTE_ADD, NOTE_READ, NOTE_REMOVE, NOTE_CLEAR,
         REMEMBER, RECALL, FORGET, SET_NAME, MEDIA, NAVIGATE, WHERE_AM_I, SHARE_LOCATION,
         CAMERA, TRANSLATE, PRAYER, BRIEFING, CONTACT_INFO,
+        EXPENSE_ADD, EXPENSE_REPORT, STOCK_QUOTE, STOCK_INDEX, PORTFOLIO_ADD, PORTFOLIO_SELL, PORTFOLIO,
+        VISION, SAVE_PLACE, REMIND_AT_PLACE,
         /** Looks like a phone command we can't do: answer honestly instead of letting the AI pretend. */
         UNSUPPORTED
     }
@@ -55,7 +57,7 @@ public final class CommandParser {
             return type + (time != null ? " time=" + time : "") + (at != null ? " at=" + at : "")
                 + (seconds > 0 ? " seconds=" + seconds : "") + (text != null ? " text='" + text + "'" : "")
                 + (message != null ? " message='" + message + "'" : "")
-                + (type == Type.CONVERT ? " value=" + Calculator.format(value) : "");
+                + (value != 0 ? " value=" + Calculator.format(value) : "");
         }
     }
 
@@ -65,7 +67,85 @@ public final class CommandParser {
         if (input == null) return null;
         String s = normalize(input);
         if (s.isEmpty()) return null;
+        // Roman Urdu ("torch band karo") becomes the English command first.
+        String urdu = RomanUrdu.rewrite(s);
+        if (urdu != null) s = normalize(urdu);
+        return parseEnglish(s, now);
+    }
+
+    private static Command parseEnglish(String s, LocalDateTime now) {
         Matcher m;
+
+        // ---- camera vision ----
+        if ((m = Pattern.compile("^(?:what(?:'s| is) (?:this|that)|what am i looking at|what(?:'s| is) in front of me|identify (?:this|that)|describe (?:this|what you see)|look at this|(?<read>read) (?:this|that)(?: text| for me| aloud| out loud)?|what does (?:this|that) say|(?<tr>translate) this(?: (?:menu|sign|text|page|board|label))?(?: (?:to|into) (?<lang>[a-z]+))?)$").matcher(s)).find()) {
+            Command c = new Command(Type.VISION);
+            c.text = m.group("tr") != null ? "translate:" + (m.group("lang") != null ? m.group("lang") : "english")
+                : m.group("read") != null || s.startsWith("what does") ? "read" : "describe";
+            return c;
+        }
+
+        // ---- places ----
+        if ((m = Pattern.compile("^(?:save|remember|mark|set) (?:this|my current|the current|current) (?:place|location|spot|address) (?:as|is) (?:my |the )?(?<n>[a-z][a-z ]*)$|^(?:this is|i'?m at|i am at) (?:my |the )?(?<n2>home|office|work|gym|school|university|college|mosque|masjid|shop|parents'? house)$").matcher(s)).find()) {
+            Command c = new Command(Type.SAVE_PLACE);
+            c.text = placeName(firstNonNull(m.group("n"), m.group("n2")));
+            return c;
+        }
+        if ((m = Pattern.compile("^remind me (?:to )?(?<t>.+?) when i (?:reach|get to|arrive at|arrive|get|am at|reach at|go to) (?:the |my )?(?<p>[a-z][a-z ]*)$|^when i (?:reach|get to|arrive at|arrive|get|go to) (?:the |my )?(?<p2>[a-z][a-z ]*?),? remind me (?:to )?(?<t2>.+)$|^remind me when i (?:reach|get to|arrive at|arrive|get) (?:the |my )?(?<p3>[a-z]+(?: house)?) (?:to |that )?(?<t3>.+)$").matcher(s)).find()) {
+            Command c = new Command(Type.REMIND_AT_PLACE);
+            c.text = placeName(firstNonNull(m.group("p"), m.group("p2"), m.group("p3")));
+            c.message = firstNonNull(m.group("t"), m.group("t2"), m.group("t3"));
+            return c;
+        }
+
+        // ---- expenses ----
+        if ((m = Pattern.compile("^(?:i )?(?:spent|spend|paid|pay|gave|bought) (?:rs\\.? ?|pkr ?|rupees )?(?<v>\\d+(?:\\.\\d+)?)(?:k)?(?: rupees| rupee| rs| pkr)? (?:on|for) (?<c>.+?)(?: today| yesterday)?$|^(?:add|log|record|note) (?:an |my )?expense(?: of)? (?:rs\\.? ?)?(?<v2>\\d+(?:\\.\\d+)?)(?: rupees| rs)?(?: (?:for|on))? (?<c2>.+)$").matcher(s)).find()) {
+            Command c = new Command(Type.EXPENSE_ADD);
+            String v = firstNonNull(m.group("v"), m.group("v2"));
+            c.value = Double.parseDouble(v) * (s.contains(v + "k ") ? 1000 : 1);
+            c.text = firstNonNull(m.group("c"), m.group("c2")).replaceFirst("^(the|my|a|an|some) ", "");
+            return c;
+        }
+        if ((m = Pattern.compile("^how much (?:did i|have i|i have|i) (?:spent|spend|spend in total|spent in total)(?: (?:on|for) (?<cat>.+?))?(?: (?<r>today|yesterday|this week|this month|last month|in total|overall))?$|^(?:show|what are|list|read)(?: me)? my (?:expenses|spending|spendings)(?: (?:for|on) (?<cat2>.+?))?(?: (?<r2>today|this week|this month|last month))?$|^my (?:expenses|spending)(?: (?<r3>today|this week|this month|last month))?$").matcher(s)).find()) {
+            Command c = new Command(Type.EXPENSE_REPORT);
+            String r = firstNonNull(m.group("r"), m.group("r2"), m.group("r3"), "this month");
+            c.text = r.matches("in total|overall") ? "all" : r;
+            c.message = firstNonNull(m.group("cat"), m.group("cat2"));
+            return c;
+        }
+
+        // ---- stocks (PSX) ----
+        if ((m = Pattern.compile("^(?:how(?:'s| is) (?:the )?|what(?:'s| is) (?:the )?)?(?<i>kse ?100|kse ?30|kmi ?30|all ?share|kmi all ?share|psx|stock market|share market|market)(?: index)?(?: today| now| doing| doing today| at| like)*$").matcher(s)).find()) {
+            Command c = new Command(Type.STOCK_INDEX);
+            String i = m.group("i").replace(" ", "");
+            c.text = i.equals("kse30") ? "KSE30" : i.equals("kmi30") ? "KMI30" : i.equals("allshare") ? "ALLSHR" : i.startsWith("kmiall") ? "KMIALLSHR" : "KSE100";
+            return c;
+        }
+        if ((m = Pattern.compile("^(?:how(?:'s| is| are) )?my (?:stocks|shares|portfolio|investments|holdings)(?: doing| today| now)*$|^(?:show|check)(?: me)? my (?:portfolio|stocks|shares|holdings)$").matcher(s)).find()) {
+            return new Command(Type.PORTFOLIO);
+        }
+        if ((m = Pattern.compile("^(?:i )?(?<verb>bought|buy|purchased|own|have|hold|sold|sell) (?<n>\\d+) (?<sh>shares? (?:of |in )?)?(?<s>[a-z0-9.&-]+(?: [a-z]+)?)(?<sh2> shares?)?(?: (?:at|@|for) (?:rs\\.? ?)?(?<p>\\d+(?:\\.\\d+)?)(?: rupees| rs)?(?: each| per share| a share)?)?$").matcher(s)).find()) {
+            String sym = PsxSymbols.resolve(m.group("s"));
+            boolean sharesWord = m.group("sh") != null || m.group("sh2") != null || m.group("s").matches(".* shares?$");
+            if (sym != null && (sharesWord || PsxSymbols.isKnown(m.group("s")))) {
+                boolean sell = m.group("verb").startsWith("sel") || m.group("verb").equals("sold");
+                Command c = new Command(sell ? Type.PORTFOLIO_SELL : Type.PORTFOLIO_ADD);
+                c.text = sym;
+                c.value = Double.parseDouble(m.group("n"));
+                c.message = m.group("p");
+                return c;
+            }
+        }
+        if ((m = Pattern.compile("^(?:what(?:'s| is) )?(?:the )?(?:current |latest |live )?(?:share |stock )?(?:price|rate) of (?<s>[a-z0-9 .&-]+?)(?: shares?| stock)?(?: today| now)?$|^(?<s2>[a-z0-9.&-]+(?: [a-z]+)?) (?:share |stock )?(?:price|rate|quote)(?: today| now)?$|^how(?:'s| is) (?<s3>[a-z0-9.&-]+(?: [a-z]+)?) (?:doing|trading|performing)(?: today)?$").matcher(s)).find()) {
+            String raw = firstNonNull(m.group("s"), m.group("s2"), m.group("s3"));
+            boolean strict = m.group("s3") != null; // "how is ali doing" must not become a ticker
+            String sym = strict ? (PsxSymbols.isKnown(raw) ? PsxSymbols.resolve(raw) : null) : PsxSymbols.resolve(raw);
+            if (sym != null) {
+                Command c = new Command(Type.STOCK_QUOTE);
+                c.text = sym;
+                c.message = s;
+                return c;
+            }
+        }
 
         if (s.matches("help|what can you do|what (are|is) your (features|commands|skills)|what commands (do you know|can i use)|how do i use (you|this app)"))
             return new Command(Type.HELP);
@@ -211,7 +291,7 @@ public final class CommandParser {
             c.text = p.matches("fajr|fajar|sehri|sahri|suhoor") ? "Fajr" : p.equals("sunrise") ? "Sunrise"
                 : p.matches("zuhr|zohr|zohar|dhuhr|duhr") ? "Dhuhr" : p.equals("asr") ? "Asr"
                 : p.matches("maghrib|magrib|iftar") ? "Maghrib" : p.matches("isha|esha") ? "Isha"
-                : s.matches(".*\\b(next|upcoming|coming)\\b.*") ? "next" : "all";
+                : s.matches(".*\\b(next|upcoming|coming|agli)\\b.*") ? "next" : "all";
             return c;
         }
 
@@ -376,6 +456,8 @@ public final class CommandParser {
         if (previous == null || input == null) return null;
         String s = normalize(input);
         boolean flash = previous == Type.FLASHLIGHT_ON || previous == Type.FLASHLIGHT_OFF;
+        String urdu = flash ? RomanUrdu.onOff(s) : null;
+        if (urdu != null) return new Command(urdu.equals("off") ? Type.FLASHLIGHT_OFF : Type.FLASHLIGHT_ON);
         if (flash && s.matches("^(now |ok |okay |and )?(please )?((turn|switch|put) )?(it |that |this )?(off|band|bund|close)( it| that| this| now| again| please)*$"))
             return new Command(Type.FLASHLIGHT_OFF);
         if (flash && s.matches("^(now |ok |okay |and )?(please )?((turn|switch|put) )?(it |that |this )?(on|back on)( it| that| this| now| again| please)*$"))
@@ -422,6 +504,15 @@ public final class CommandParser {
         if (s.matches(".*\\b(" + upWords + ")\\b.*")) return "up";
         if (s.matches(".*\\b(" + downWords + ")\\b.*")) return "down";
         return "status";
+    }
+
+    /** "my office" → "office", "work" → "office", "parents house" → "parents' house". */
+    static String placeName(String p) {
+        String n = p.trim().replaceFirst("^(my|the) ", "").replaceAll(" (place|location)$", "");
+        if (n.equals("work") || n.equals("daftar")) return "office";
+        if (n.equals("ghar") || n.equals("house")) return "home";
+        if (n.equals("masjid")) return "mosque";
+        return n.replace("parents house", "parents' house");
     }
 
     private static String firstNonNull(String... xs) {
@@ -578,7 +669,7 @@ public final class CommandParser {
 
     // ---- text clean-up ---------------------------------------------------------------------
 
-    static String normalize(String input) {
+    public static String normalize(String input) {
         String s = input.toLowerCase(Locale.US).trim();
         s = s.replace("a.m.", "am").replace("p.m.", "pm").replace("a. m.", "am").replace("p. m.", "pm");
         s = s.replaceAll("(\\d)(am|pm)\\b", "$1 $2");
